@@ -1,0 +1,1255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backtest Dashboard</title>
+<style>
+  :root{
+    --bg:#0b0e14;
+    --panel:#131722;
+    --panel2:#181d2a;
+    --line:#242b3d;
+    --text:#e7ecf5;
+    --muted:#8b96ad;
+    --accent:#4f9cff;
+    --green:#22c98a;
+    --red:#ff5c6c;
+    --amber:#f7b801;
+    --grid:rgba(255,255,255,.07);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:14px;-webkit-font-smoothing:antialiased}
+  a{color:var(--accent)}
+  header#topbar{
+    position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:14px;
+    padding:10px 18px;background:rgba(11,14,20,.92);backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line)
+  }
+  .brand{font-weight:700;font-size:15px;letter-spacing:.2px;display:flex;align-items:center;gap:9px}
+  .logo{color:var(--accent);font-size:16px}
+  .brand small{color:var(--muted);font-weight:500;font-size:11px;margin-left:4px}
+  .actions{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .btn{
+    appearance:none;border:1px solid var(--line);background:var(--panel2);color:var(--text);
+    padding:7px 13px;border-radius:8px;cursor:pointer;font-size:13px;line-height:1;
+    transition:.15s;white-space:nowrap
+  }
+  .btn:hover{border-color:var(--accent);color:#fff}
+  .btn.primary{background:linear-gradient(180deg,#4f9cff,#2f7fe0);border-color:#2f7fe0;color:#fff;font-weight:600}
+  .btn.primary:hover{filter:brightness(1.08)}
+  .btn.ghost{background:transparent}
+  main{max-width:1500px;margin:0 auto;padding:18px;display:block}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px}
+
+  /* empty state */
+  #empty{max-width:760px;margin:8vh auto;text-align:center;padding:44px 28px}
+  #empty h1{margin:.2em 0;font-size:26px}
+  #empty p{color:var(--muted);line-height:1.6}
+  #empty .hint{margin-top:18px;font-size:12.5px;color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;text-align:left;
+    background:#0d111a;border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:inline-block}
+  #empty .hint b{color:var(--text)}
+
+  /* drop overlay */
+  #dropOverlay{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;
+    background:rgba(6,9,14,.78);border:2px dashed var(--accent);font-size:18px;font-weight:600;color:#fff}
+  #dropOverlay.on{display:flex}
+
+  /* controls */
+  .controls{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;padding:14px;margin-bottom:14px}
+  .field{display:flex;flex-direction:column;gap:5px}
+  .field label{font-size:10.5px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);font-weight:600}
+  .field select,.field input[type=date],.field input[type=number]{
+    background:#0d111a;border:1px solid var(--line);color:var(--text);border-radius:7px;
+    padding:6px 9px;font-size:13px;min-width:96px;font-family:inherit
+  }
+  .field input[type=number]{width:88px}
+  .seg{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+  .seg button{appearance:none;border:0;background:#0d111a;color:var(--muted);padding:7px 11px;cursor:pointer;font-size:12.5px}
+  .seg button.active{background:var(--accent);color:#fff}
+  .spacer{flex:1}
+
+  /* dataset chips */
+  .datasets{display:flex;flex-wrap:wrap;gap:8px;padding:10px 14px;border-top:1px solid var(--line);width:100%}
+  .chip{display:flex;align-items:center;gap:8px;background:#0d111a;border:1px solid var(--line);
+    border-radius:20px;padding:5px 10px;font-size:12.5px;cursor:pointer}
+  .chip.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+  .chip .dot{width:9px;height:9px;border-radius:50%}
+  .chip .x{color:var(--muted);cursor:pointer;padding:0 1px}
+  .chip .x:hover{color:var(--red)}
+  .chip .eye{opacity:.9}
+
+  /* metrics */
+  .metrics{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+  .metric{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .metric .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .metric .v{font-size:19px;font-weight:700;margin-top:5px;font-variant-numeric:tabular-nums}
+  .metric .s{font-size:11px;color:var(--muted);margin-top:2px}
+  .pos{color:var(--green)} .neg{color:var(--red)} .neutral{color:var(--text)}
+
+  /* grid + cards */
+  .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;position:relative;min-width:0}
+  .card.span2{grid-column:span 2}
+  .card h3{margin:0 0 6px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .card h3 .sub{font-size:11px;color:var(--muted);font-weight:500}
+  .card canvas{width:100%;display:block;height:230px}
+  .card canvas.tall{height:300px}
+  @media (max-width:900px){ .grid{grid-template-columns:1fr} .card.span2{grid-column:span 1} }
+
+  /* legend */
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin:2px 0 8px}
+  .legend .item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer;user-select:none}
+  .legend .item.off{opacity:.4;text-decoration:line-through}
+  .legend .swatch{width:14px;height:3px;border-radius:2px}
+
+  /* tooltip */
+  .tooltip{position:absolute;pointer-events:none;background:rgba(9,12,18,.96);border:1px solid var(--line);
+    border-radius:8px;padding:7px 10px;font-size:11.5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    color:var(--text);display:none;z-index:30;white-space:nowrap;box-shadow:0 6px 20px rgba(0,0,0,.5)}
+  .tooltip .row{display:flex;gap:10px;justify-content:space-between}
+  .tooltip .ttl{color:var(--muted);margin-bottom:3px;border-bottom:1px solid var(--line);padding-bottom:3px}
+
+  /* heatmap */
+  #heatmap{overflow-x:auto}
+  table.heat{border-collapse:separate;border-spacing:3px;font-size:11px;width:100%}
+  table.heat th{color:var(--muted);font-weight:600;font-size:10.5px;text-align:center;padding:2px 4px}
+  table.heat td{text-align:center;padding:5px 3px;border-radius:5px;font-variant-numeric:tabular-nums;color:#0b0e14;font-weight:600}
+  table.heat td.year{color:var(--muted);font-weight:700;background:none!important}
+
+  /* tables */
+  .tablewrap{overflow:auto;max-height:330px;border:1px solid var(--line);border-radius:8px}
+  table.data{border-collapse:collapse;width:100%;font-size:12px}
+  table.data th,table.data td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+  table.data th{position:sticky;top:0;background:var(--panel2);color:var(--muted);font-weight:600;z-index:1;text-align:right}
+  table.data td:first-child,table.data th:first-child{text-align:left}
+  table.data tr:hover td{background:rgba(79,156,255,.06)}
+  .mapgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;width:100%;padding:2px 0}
+  .empty-note{color:var(--muted);font-size:12.5px;padding:22px;text-align:center}
+  footer{color:var(--muted);font-size:11.5px;text-align:center;padding:8px 0 26px}
+  @media print{
+    header#topbar,.actions,.controls .btn,.empty-note{display:none!important}
+    body{background:#fff;color:#000}.card,.metric{break-inside:avoid;border-color:#ccc}
+  }
+</style>
+</head>
+<body>
+
+<header id="topbar">
+  <div class="brand"><span class="logo">&#9650;</span> Backtest Dashboard <small>local · offline · nothing leaves your machine</small></div>
+  <div class="actions">
+    <label class="btn primary" for="fileInput">Open CSV</label>
+    <input id="fileInput" type="file" accept=".csv,.tsv,.txt" multiple hidden>
+    <button class="btn" id="demoBtn">Load demo</button>
+    <button class="btn ghost" id="printBtn">Print</button>
+    <button class="btn ghost" id="exportBtn">Export metrics</button>
+    <button class="btn ghost" id="clearBtn">Clear</button>
+  </div>
+</header>
+
+<div id="dropOverlay">Drop CSV file(s) to load</div>
+
+<main>
+  <section id="empty" class="panel">
+    <h1>Backtest Dashboard</h1>
+    <p>Drop one or more <b>CSV</b> files exported from a backtest and instantly get an equity curve,
+       drawdown, risk metrics, monthly heatmap and trade stats &mdash; computed entirely in your browser.</p>
+    <div class="hint">
+      Recognised columns (auto-detected, overridable):<br>
+      <b>date</b> · <b>equity / value / nav</b> &nbsp;or&nbsp; <b>return / pnl_pct</b> &nbsp;·&nbsp; <b>trade pnl</b> · <b>benchmark</b><br>
+      <br>
+      Works with <b>equity curves</b> (a NAV column) or <b>return streams</b> (compounded into a curve).<br>
+      Prefer a strategy value plus a benchmark column to see alpha and buy &amp; hold.
+    </div>
+  </section>
+
+  <section id="dash" hidden>
+    <div class="controls panel">
+      <div class="field">
+        <label for="edySelect">Dataset</label>
+        <select id="dsSelect"></select>
+      </div>
+      <div class="field">
+        <label for="ppySel">Periods / year</label>
+        <select id="ppySel">
+          <option value="252">252 · daily</option>
+          <option value="365">365 · crypto</option>
+          <option value="52">52 · weekly</option>
+          <option value="12">12 · monthly</option>
+          <option value="4">4 · quarterly</option>
+          <option value="8760">8760 · hourly</option>
+          <option value="custom">custom…</option>
+        </select>
+      </div>
+      <div class="field" id="ppyCustomWrap" hidden>
+        <label>Custom PPY</label>
+        <input id="ppyCustom" type="number" min="1" step="1" value="252">
+      </div>
+      <div class="field">
+        <label for="rfInput">Risk-free % / yr</label>
+        <input id="rfInput" type="number" step="0.1" value="0">
+      </div>
+      <div class="field">
+        <label for="rollInput">Rolling window</label>
+        <input id="rollInput" type="number" min="5" step="1" value="63">
+      </div>
+      <div class="field">
+        <label for="startInput">Start date</label>
+        <input id="startInput" type="date">
+      </div>
+      <div class="field">
+        <label for="endInput">End date</label>
+        <input id="endInput" type="date">
+      </div>
+      <div class="spacer"></div>
+      <div class="field">
+        <label>Compare curves</label>
+        <div class="seg" id="normSeg">
+          <button data-mode="norm" class="active">Rebased</button>
+          <button data-mode="raw">Raw</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Rebase base</label>
+        <input id="baseInput" type="number" step="10" value="100">
+      </div>
+      <div class="datasets" id="dsChips"></div>
+    </div>
+
+    <div class="card" style="margin-bottom:14px">
+      <h3>Column mapping <span class="sub">auto-detected &mdash; change any dropdown to remap this dataset</span></h3>
+      <div class="mapgrid" id="mapGrid"></div>
+    </div>
+
+    <div class="metrics" id="metrics"></div>
+
+    <div class="grid">
+      <div class="card span2">
+        <h3>Equity Curve <span class="sub" id="eqSub"></span></h3>
+        <div class="legend" id="eqLegend"></div>
+        <canvas id="eqChart" class="tall"></canvas>
+      </div>
+      <div class="card">
+        <h3>Drawdown <span class="sub">underwater curve</span></h3>
+        <canvas id="ddChart"></canvas>
+      </div>
+      <div class="card">
+        <h3>Rolling Sharpe <span class="sub" id="rollSub"></span></h3>
+        <canvas id="rollChart"></canvas>
+      </div>
+      <div class="card">
+        <h3>Return Distribution</h3>
+        <canvas id="histChart"></canvas>
+      </div>
+      <div class="card">
+        <h3>Monthly Returns</h3>
+        <div id="heatmap"></div>
+      </div>
+      <div class="card span2">
+        <h3>Trade P&amp;L Distribution <span class="sub" id="tradeSub"></span></h3>
+        <canvas id="tradeChart"></canvas>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Trades / Periods <span class="sub" id="tblSub"></span></h3>
+      <div class="tablewrap" id="tradeTable"></div>
+    </div>
+  </section>
+</main>
+
+<footer>Backtest Dashboard &mdash; runs fully client-side. No data is uploaded or stored.</footer>
+
+<script>
+(function(){
+"use strict";
+
+/* =====================================================================
+   Utils
+   ===================================================================== */
+const $  = (s, r) => (r||document).querySelector(s);
+const $$ = (s, r) => Array.prototype.slice.call((r||document).querySelectorAll(s));
+const clamp = (x,a,b)=> Math.max(a, Math.min(b,x));
+const isFin = x => typeof x === "number" && isFinite(x);
+
+const PALETTE = ["#4f9cff","#ff6b6b","#2ec4b6","#f7b801","#b388ff","#ff9f43","#00d4aa","#e84a5f","#7bd389","#f06595"];
+
+function fmtPct(x, d){ if(!isFin(x)) return "\u2014"; d = d==null?2:d; return (x*100).toFixed(d)+"%"; }
+function fmtPctSign(x, d){ if(!isFin(x)) return "\u2014"; return (x>0?"+":"")+fmtPct(x,d); }
+function fmtNum(x, d){ if(!isFin(x)) return "\u2014"; d = d==null?2:d; return x.toFixed(d); }
+function fmtMon(x){ if(!isFin(x)) return "\u2014"; return (x<0?"-":"")+"$"+Math.abs(x).toLocaleString(undefined,{maximumFractionDigits:0}); }
+function fmtDate(ms){ if(!isFin(ms)) return ""; const d=new Date(ms); return d.toISOString().slice(0,10); }
+function fmtDateShort(ms){ if(!isFin(ms)) return ""; const d=new Date(ms); const m=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]; return m[d.getUTCMonth()]+" "+String(d.getUTCFullYear()).slice(2); }
+function lower(s){ return String(s==null?"":s).trim().toLowerCase(); }
+function normKey(s){ return lower(s).replace(/[^a-z0-9]/g,""); }
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+/* deterministic rng for demo */
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+function makeGauss(rng){ let spare=null; return function(){ if(spare!=null){const s=spare;spare=null;return s;} let u=0,v=0; while(u===0)u=rng(); while(v===0)v=rng(); const r=Math.sqrt(-2*Math.log(u)); spare=r*Math.sin(2*Math.PI*v); return r*Math.cos(2*Math.PI*v); }; }
+
+/* =====================================================================
+   CSV parsing
+   ===================================================================== */
+function detectDelimiter(line){
+  const cand=[",",";","\t","|"]; let best=",", bestN=0;
+  for(const d of cand){ const n=line.split(d).length; if(n>bestN){bestN=n;best=d;} }
+  return best;
+}
+function parseCSV(text){
+  text = text.replace(/^\uFEFF/,"").replace(/\r\n?/g,"\n");
+  const lines = text.split("\n");
+  let first="";
+  for(const l of lines){ if(l.trim().length){ first=l; break; } }
+  const delim = detectDelimiter(first||",");
+  const rows=[]; let cur=[], field="", inQ=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(inQ){
+      if(c==='"'){ if(text[i+1]==='"'){ field+='"'; i++; } else inQ=false; }
+      else field+=c;
+    } else {
+      if(c==='"') inQ=true;
+      else if(c===delim){ cur.push(field); field=""; }
+      else if(c==="\n"){ cur.push(field); rows.push(cur); cur=[]; field=""; }
+      else field+=c;
+    }
+  }
+  if(field.length || cur.length){ cur.push(field); rows.push(cur); }
+  while(rows.length && rows[rows.length-1].every(v=>String(v).trim()==="")) rows.pop();
+  if(!rows.length) return {header:[], rows:[]};
+  let header = rows[0].map((h,i)=> String(h).trim() || ("col"+i));
+  const data=[];
+  for(let r=1;r<rows.length;r++){
+    const rr=rows[r];
+    if(rr.every(v=>String(v).trim()==="")) continue;
+    const o={};
+    for(let c=0;c<header.length;c++) o[header[c]] = rr[c]!==undefined ? rr[c] : "";
+    data.push(o);
+  }
+  return {header:header, rows:data};
+}
+
+const MONTHS={"jan":0,"feb":1,"mar":2,"apr":3,"may":4,"jun":5,"jul":6,"aug":7,"sep":8,"oct":9,"nov":10,"dec":11};
+function parseDate(v){
+  if(v==null) return NaN;
+  if(v instanceof Date) return v.getTime();
+  const s=String(v).trim();
+  if(!s) return NaN;
+  let t=Date.parse(s);
+  if(!isNaN(t)) return t;
+  let m=s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/); // ambiguous, assume mm/dd/yyyy
+  if(m){ let y=+m[3]; if(y<100)y+=2000; const t2=Date.UTC(y,+m[1]-1,+m[2]); if(!isNaN(t2))return t2; }
+  m=s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/);
+  if(m){ const t2=Date.UTC(+m[1],+m[2]-1,+m[3]); if(!isNaN(t2))return t2; }
+  m=s.match(/^([A-Za-z]{3,})\s+(\d{1,2}),?\s+(\d{2,4})/);
+  if(m){ const mo=MONTHS[m[1].slice(0,3).toLowerCase()]; if(mo!=null){ let y=+m[3]; if(y<100)y+=2000; return Date.UTC(y,mo,+m[2]); } }
+  return NaN;
+}
+function parseNum(v){
+  if(typeof v==="number") return v;
+  if(v==null) return NaN;
+  let s=String(v).trim();
+  if(!s) return NaN;
+  s=s.replace(/[%$£€,\s]/g,"");
+  if(s===""||s==="-"||s==="\u2014") return NaN;
+  const n=parseFloat(s);
+  return isNaN(n)?NaN:n;
+}
+function hadPercent(v){ return typeof v==="string" && v.indexOf("%")>=0; }
+
+/* =====================================================================
+   Column auto-detection
+   ===================================================================== */
+const RX = {
+  date: /date|datetime|timestamp|time|period|week|month|day|dt$/,
+  benchmark: /benchmark|buyhold|buy_and_hold|bh$|spx|spy|^index|market$/,
+  tradePnl: /trade.*pnl|^pnl|pnl$|profit|realized|pl$/,
+  returns: /return|ret$|ret_|dailyret|pct|percent|pnl_pct|change/,
+  equity: /equity|nav|portfolio|balance|accountvalue|value|capital|networth|cum|wealth|curve/
+};
+
+function sampleColumn(rows, col, n){
+  n = n||12; const out=[];
+  for(let i=0;i<rows.length && out.length<n;i++){ const v=rows[i][col]; if(v!==undefined && String(v).trim()!=="") out.push(v); }
+  return out;
+}
+function looksLikeDates(vals){
+  if(!vals.length) return false;
+  let ok=0; for(const v of vals) if(!isNaN(parseDate(v))) ok++;
+  return ok/vals.length >= 0.8;
+}
+function numericFraction(vals){
+  if(!vals.length) return 0;
+  let ok=0; for(const v of vals) if(!isNaN(parseNum(v))) ok++;
+  return ok/vals.length;
+}
+
+function detectMapping(header, rows){
+  const map={date:null, equity:null, returns:null, tradePnl:null, benchmark:null};
+  const numeric = {};
+  for(const h of header) numeric[h] = numericFraction(sampleColumn(rows,h));
+
+  // date: name hint, else value parse (prefer a column whose name doesn't look numeric)
+  let dateName = header.find(h => RX.date.test(normKey(h)) && numericFraction(sampleColumn(rows,h))<0.5);
+  if(!dateName){
+    for(const h of header){ if(looksLikeDates(sampleColumn(rows,h))){ dateName=h; break; } }
+  }
+  if(!dateName){ // last resort: first column
+    for(const h of header){ if(looksLikeDates(sampleColumn(rows,h))){ dateName=h; break; } }
+    if(!dateName) dateName = header[0];
+  }
+  map.date = dateName;
+
+  const numCols = header.filter(h => h!==dateName && numeric[h]>=0.6);
+  const pick = (rx, exclude) => numCols.find(h => rx.test(normKey(h)) && (!exclude||!exclude.includes(h)));
+
+  map.benchmark = pick(RX.benchmark);
+  // returns: prefer explicitly "strategy" runs over market/next-period returns
+  let returns = numCols.filter(h => RX.returns.test(normKey(h)) && h!==map.benchmark);
+  returns.sort((a,b) => (normKey(b).indexOf("strategy")>=0?1:0) - (normKey(a).indexOf("strategy")>=0?1:0));
+  returns = returns[0] || null;
+  // trade pnl: prefer explicit, but avoid grabbing the benchmark / returns columns
+  let tradePnl = pick(RX.tradePnl, [map.benchmark, returns]);
+  // equity: a genuine level column, not the benchmark / returns / pnl columns
+  let equity = pick(RX.equity, [map.benchmark, returns, tradePnl]);
+
+  map.returns = returns || null;
+  map.tradePnl = tradePnl || null;
+  map.equity = equity || null;
+  if(!map.equity && !map.returns && !map.tradePnl && numCols.length) map.equity = numCols[0];
+  return map;
+}
+
+/* =====================================================================
+   Dataset model
+   ===================================================================== */
+let datasets = [];      // {id,name,color,visible,header,rows,mapping,dates,equity,returns,benchmarkEq,trades,stats}
+let activeId = null;
+let idSeq = 0;
+let normMode = "norm";
+
+function seriesFromRows(ds){
+  const map = ds.mapping;
+  const rows = ds.rows;
+  const dates=[], ret=[], bm=[];
+  const base = 100;
+  // returns unit heuristic (fraction vs percent)
+  let retVals = null;
+  if(map.returns){
+    retVals = rows.map(r => parseNum(r[map.returns]));
+    let maxAbs=0;
+    for(const v of retVals) if(isFin(v)) maxAbs=Math.max(maxAbs, Math.abs(v));
+    if(maxAbs>1.5) retVals = retVals.map(v => isFin(v) ? v/100 : v); // treat as percent
+  }
+  // p&l column, when present
+  const plVals = map.tradePnl ? rows.map(r => parseNum(r[map.tradePnl])) : null;
+  // equity column — but if it is really a P&L/return stream (has negatives), demote it
+  let eqVals = map.equity ? rows.map(r => parseNum(r[map.equity])) : null;
+  if(eqVals){
+    const vals = eqVals.filter(isFin);
+    const nonPos = vals.filter(v=>v<=0).length;
+    if(vals.length && nonPos/vals.length > 0.15){
+      if(!map.tradePnl) map.tradePnl = map.equity;
+      eqVals = null; map.equity = null;
+    }
+  }
+  const plUse = map.tradePnl ? (rows.map(r => parseNum(r[map.tradePnl]))) : plVals;
+  // build the equity curve from whichever source is available
+  let equity=[];
+  if(eqVals){ equity = eqVals; }
+  else if(retVals){
+    let acc=base; for(let i=0;i<rows.length;i++){ const r=retVals[i]; if(isFin(r)) acc*= (1+r); equity.push(acc); }
+  } else if(plUse){
+    let acc=base; for(let i=0;i<rows.length;i++){ const p=plUse[i]; if(isFin(p)) acc+=p; equity.push(acc); }
+  } else {
+    for(let i=0;i<rows.length;i++) equity.push(base);
+  }
+  for(let i=0;i<rows.length;i++){
+    const r=rows[i];
+    let dt = map.date ? parseDate(r[map.date]) : NaN;
+    if(isNaN(dt)) dt = i;
+    dates.push(dt);
+    if(retVals) ret.push(retVals[i]); else ret.push(NaN);
+    bm.push(map.benchmark ? parseNum(r[map.benchmark]) : NaN);
+  }
+  // benchmark: rebase to equity start for overlay
+  const firstValid = equity.find(v=>isFin(v)&&v>0);
+  const bmValid = bm.some(v=>isFin(v)&&v>0);
+  let benchmarkEq = null;
+  if(bmValid){
+    const b0 = bm.find(v=>isFin(v)&&v>0);
+    benchmarkEq = bm.map(v => isFin(v)&&v>0 ? (v/b0)*(isFin(firstValid)?firstValid:100) : NaN);
+  }
+  // trades: explicit column, else non-zero returns when we only have a return stream
+  let trades=null;
+  if(map.tradePnl){
+    trades = rows.map(r=>parseNum(r[map.tradePnl])).filter(isFin);
+  }
+  ds.dates = dates;
+  ds.equity = equity;
+  ds.returns = retVals;
+  ds.benchmarkEq = benchmarkEq;
+  ds.trades = trades;
+  ds._base = isFin(firstValid)?firstValid:100;
+}
+
+function addDataset(name, header, rows, opts){
+  opts = opts||{};
+  const ds = {
+    id: ++idSeq,
+    name: name,
+    color: opts.color || PALETTE[datasets.length % PALETTE.length],
+    visible: true,
+    header: header,
+    rows: rows,
+    mapping: opts.mapping && Object.keys(opts.mapping).length ? opts.mapping : detectMapping(header, rows)
+  };
+  seriesFromRows(ds);
+  ds.stats = computeStats(ds, settings());
+  datasets.push(ds);
+  activeId = ds.id;
+  return ds;
+}
+
+function getActive(){ return datasets.find(d=>d.id===activeId) || datasets[0] || null; }
+
+/* =====================================================================
+   Analytics
+   ===================================================================== */
+function settings(){
+  let ppy = parseInt($("#ppySel").value,10);
+  if($("#ppySel").value==="custom") ppy = parseInt($("#ppyCustom").value,10) || 252;
+  const rf = (parseFloat($("#rfInput").value)||0)/100;
+  const roll = Math.max(5, parseInt($("#rollInput").value,10)||63);
+  return {ppy:ppy, rf:rf, roll:roll};
+}
+
+function mean(a){ if(!a.length) return NaN; let s=0; for(const x of a)s+=x; return s/a.length; }
+function stdev(a, mu){ if(a.length<2) return NaN; if(mu==null) mu=mean(a); let s=0; for(const x of a){const d=x-mu;s+=d*d;} return Math.sqrt(s/(a.length-1)); }
+function percentile(sorted, p){ if(!sorted.length) return NaN; const i=clamp((sorted.length-1)*p,0,sorted.length-1); const lo=Math.floor(i), hi=Math.ceil(i); return sorted[lo]+(sorted[hi]-sorted[lo])*(i-lo); }
+
+function dateFilteredSeries(ds, s){
+  // s = settings(); applies date range + trimming of invalid equity
+  const E=[], D=[];
+  const start = $("#startInput").value ? Date.parse($("#startInput").value) : null;
+  const end   = $("#endInput").value ? Date.parse($("#endInput").value)+86400000 : null;
+  for(let i=0;i<ds.equity.length;i++){
+    const e=ds.equity[i], d=ds.dates[i];
+    if(!isFin(e) || e<=0) continue;
+    if(isFin(d)){
+      if(start!=null && d<start) continue;
+      if(end!=null && d>end) continue;
+    }
+    E.push(e); D.push(d);
+  }
+  return {E:E, D:D};
+}
+
+function computeStats(ds, s){
+  s = s || settings();
+  const {E, D} = dateFilteredSeries(ds, s);
+  const out = {n:E.length, E:E, D:D, ppy:s.ppy, rf:s.rf};
+  if(E.length<2){
+    out.valid=false; return out;
+  }
+  out.valid=true;
+  const R=[]; for(let i=1;i<E.length;i++) R.push(E[i]/E[i-1]-1);
+  const m=R.length;
+  const mu=mean(R), sd=stdev(R,mu);
+  const first=E[0], last=E[E.length-1];
+  out.totalReturn = last/first-1;
+  const years = m/s.ppy;
+  out.years = years;
+  out.cagr = years>0 ? Math.pow(last/first, 1/years)-1 : NaN;
+  out.annVol = sd*Math.sqrt(s.ppy);
+  out.sharpe = out.annVol>0 ? (mu*s.ppy - s.rf)/out.annVol : NaN;
+  let dsum=0; for(const r of R){ if(r<0) dsum+=r*r; }
+  const ddev=Math.sqrt(dsum/R.length);
+  out.sortino = ddev>0 ? (mu*s.ppy - s.rf)/(ddev*Math.sqrt(s.ppy)) : NaN;
+  // drawdown
+  let peak=first, maxdd=0, peakAt=first;
+  const uw=[];
+  for(let i=0;i<E.length;i++){
+    if(E[i]>peak){ peak=E[i]; }
+    const dd=E[i]/peak-1;
+    uw.push(dd);
+    if(dd<maxdd){ maxdd=dd; }
+  }
+  out.maxdd=maxdd; out.underwater=uw;
+  out.calmar = maxdd<0 ? out.cagr/Math.abs(maxdd) : NaN;
+  // distribution
+  const sorted=R.slice().sort((a,b)=>a-b);
+  out.best=Math.max.apply(null,R); out.worst=Math.min.apply(null,R);
+  out.var95 = -percentile(sorted,0.05);
+  let csum=0,cn=0; const idx=Math.max(0,Math.floor(0.05*m)-1);
+  for(let i=0;i<=idx;i++){ csum+=sorted[i]; cn++; }
+  out.cvar95 = cn? -(csum/cn) : NaN;
+  out.skew = sd>0 ? R.reduce((a,r)=>a+Math.pow((r-mu)/sd,3),0)/m : NaN;
+  out.kurt = sd>0 ? R.reduce((a,r)=>a+Math.pow((r-mu)/sd,4),0)/m - 3 : NaN;
+  out.avg = mu;
+  out.returns=R;
+
+  // rolling sharpe
+  const w=Math.min(s.roll, Math.max(2, m-1));
+  const rollX=[], rollY=[];
+  for(let i=w;i<=m;i++){
+    const seg=R.slice(i-w,i); const rmu=mean(seg), rsd=stdev(seg,rmu);
+    const val = rsd>0 ? (rmu*s.ppy - s.rf)/(rsd*Math.sqrt(s.ppy)) : NaN;
+    rollX.push(D[i]!==undefined?D[i]:i); rollY.push(val);
+  }
+  out.rollX=rollX; out.rollY=rollY; out.rollW=w;
+
+  // trade stats
+  let tradeVals;
+  if(ds.trades && ds.trades.length>1){
+    tradeVals = ds.trades;
+    out.tradeSource="trades";
+  } else {
+    tradeVals = R;
+    out.tradeSource="periods";
+  }
+  const wins=tradeVals.filter(v=>v>0), losses=tradeVals.filter(v=>v<0);
+  out.nTrades=tradeVals.length;
+  out.winRate = tradeVals.length? wins.length/tradeVals.length : NaN;
+  const gp=wins.reduce((a,b)=>a+b,0), gl=Math.abs(losses.reduce((a,b)=>a+b,0));
+  out.profitFactor = gl>0 ? gp/gl : (gp>0?Infinity:NaN);
+  out.avgWin = wins.length? mean(wins):NaN;
+  out.avgLoss = losses.length? mean(losses):NaN;
+  out.payoff = (isFin(out.avgLoss)&&out.avgLoss!==0)? Math.abs(out.avgWin/out.avgLoss):NaN;
+  out.expectancy = out.winRate*out.avgWin + (1-out.winRate)*out.avgLoss;
+  out.trades=tradeVals;
+  // streaks
+  let cw=0,cl=0,mw=0,ml=0;
+  for(const v of tradeVals){ if(v>0){cw++;cl=0;mw=Math.max(mw,cw);} else if(v<0){cl++;cw=0;ml=Math.max(ml,cl);} else {cw=cl=0;} }
+  out.maxWinStreak=mw; out.maxLossStreak=ml;
+  // gross profit/loss
+  out.grossProfit=gp; out.grossLoss=gl;
+  return out;
+}
+
+function monthlyReturns(stats){
+  const {E,D} = stats;
+  const map={}; // "YYYY-M" -> compounded return
+  for(let i=0;i<E.length;i++){
+    if(!isFin(D[i])) return null;
+    const d=new Date(D[i]); const y=d.getUTCFullYear(), mo=d.getUTCMonth();
+    const key=y+"-"+mo;
+    if(i===0){ if(!(key in map)) map[key]=1; continue; }
+    const r = E[i]/E[i-1]-1;
+    map[key] = (map[key]===undefined?1:map[key])*(1+r);
+  }
+  const table={}; // year -> [12]
+  for(const key in map){
+    const [y,m]=key.split("-").map(Number);
+    if(!table[y]) table[y]=new Array(12).fill(null);
+    table[y][m]=map[key]-1;
+  }
+  return table;
+}
+
+/* =====================================================================
+   Canvas charting helpers
+   ===================================================================== */
+function setupCanvas(canvas, cssHeight){
+  const dpr = window.devicePixelRatio||1;
+  const rect = canvas.getBoundingClientRect();
+  const w = Math.max(220, Math.round(rect.width));
+  const h = Math.max(120, Math.round(cssHeight || rect.height || 230));
+  canvas.width = Math.round(w*dpr);
+  canvas.height = Math.round(h*dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  return {ctx:ctx,w:w,h:h};
+}
+
+function nearestIndex(points, x){
+  let lo=0, hi=points.length-1;
+  if(!points.length) return -1;
+  while(lo<hi){ const mid=(lo+hi)>>1; if(points[mid].x < x) lo=mid+1; else hi=mid; }
+  if(lo>0){ const a=points[lo-1], b=points[lo]; if(Math.abs(a.x-x) < Math.abs(b.x-x)) return lo-1; }
+  return lo;
+}
+
+function lineChart(canvas, height){
+  const tip = document.createElement("div"); tip.className="tooltip";
+  canvas.parentElement.appendChild(tip);
+  let opts=null, scales=null;
+
+  function baseDraw(){
+    const r = setupCanvas(canvas, height);
+    const ctx=r.ctx, w=r.w, h=r.h;
+    ctx.clearRect(0,0,w,h);
+    if(!opts) return;
+    const pad={l:56,r:14,t:12,b:26};
+    const iw=w-pad.l-pad.r, ih=h-pad.t-pad.b;
+    if(iw<=0||ih<=0) return;
+    let xMin=Infinity,xMax=-Infinity,yMin=Infinity,yMax=-Infinity;
+    for(const s of opts.series){
+      if(s.hidden) continue;
+      for(const p of s.points){ if(!isFin(p.x)||!isFin(p.y))continue;
+        if(p.x<xMin)xMin=p.x; if(p.x>xMax)xMax=p.x; if(p.y<yMin)yMin=p.y; if(p.y>yMax)yMax=p.y; }
+    }
+    if(!isFin(xMin)){ scales=null; return; }
+    if(xMin===xMax) xMax=xMin+1;
+    if(yMin===yMax){ yMin-=1; yMax+=1; }
+    if(opts.includeZero){ yMin=Math.min(yMin,opts.zeroAt!=null?opts.zeroAt:0); yMax=Math.max(yMax,opts.zeroAt!=null?opts.zeroAt:0); }
+    const padY=(yMax-yMin)*0.08 || 1; yMin-=padY; yMax+=padY;
+    const X=x=>pad.l+(x-xMin)/(xMax-xMin)*iw;
+    const Y=y=>pad.t+ih-(y-yMin)/(yMax-yMin)*ih;
+
+    ctx.font="11px ui-monospace,SFMono-Regular,Menlo,monospace";
+    // y grid
+    const gy=5;
+    for(let i=0;i<=gy;i++){
+      const v=yMin+(yMax-yMin)*i/gy, yy=Y(v);
+      ctx.strokeStyle="rgba(255,255,255,.07)"; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(pad.l,yy); ctx.lineTo(w-pad.r,yy); ctx.stroke();
+      ctx.fillStyle="rgba(139,150,173,.9)"; ctx.textAlign="right"; ctx.textBaseline="middle";
+      ctx.fillText(opts.yFormat?opts.yFormat(v):fmtNum(v), pad.l-8, yy);
+    }
+    // x grid
+    const gx=clamp(Math.floor(iw/120),2,6);
+    ctx.textAlign="center"; ctx.textBaseline="top";
+    for(let i=0;i<=gx;i++){
+      const xv=xMin+(xMax-xMin)*i/gx, xx=X(xv);
+      ctx.strokeStyle="rgba(255,255,255,.045)";
+      ctx.beginPath(); ctx.moveTo(xx,pad.t); ctx.lineTo(xx,h-pad.b); ctx.stroke();
+      ctx.fillStyle="rgba(139,150,173,.9)";
+      ctx.fillText(opts.xFormat?opts.xFormat(xv):String(xv), xx, h-pad.b+7);
+    }
+    // zero line
+    if(yMin<0 && yMax>0){
+      const y0=Y(0);
+      ctx.strokeStyle="rgba(255,255,255,.28)"; ctx.setLineDash([4,4]);
+      ctx.beginPath(); ctx.moveTo(pad.l,y0); ctx.lineTo(w-pad.r,y0); ctx.stroke(); ctx.setLineDash([]);
+    }
+    // series
+    for(const s of opts.series){
+      if(s.hidden) continue;
+      const pts=s.points.filter(p=>isFin(p.x)&&isFin(p.y)).sort((a,b)=>a.x-b.x);
+      if(!pts.length) continue;
+      if(s.fill){
+        const base = s.baseline!==undefined ? s.baseline : (opts.zeroAt!=null?opts.zeroAt:0);
+        ctx.beginPath(); ctx.moveTo(X(pts[0].x), Y(base));
+        for(const p of pts) ctx.lineTo(X(p.x), Y(p.y));
+        ctx.lineTo(X(pts[pts.length-1].x), Y(base)); ctx.closePath();
+        ctx.fillStyle=s.fill; ctx.fill();
+      }
+      ctx.beginPath();
+      for(let i=0;i<pts.length;i++){ const xx=X(pts[i].x), yy=Y(pts[i].y); if(i===0)ctx.moveTo(xx,yy); else ctx.lineTo(xx,yy); }
+      ctx.strokeStyle=s.color; ctx.lineWidth=s.width||1.9; ctx.lineJoin="round"; ctx.lineCap="round";
+      if(s.dash) ctx.setLineDash([5,4]);
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    scales={X:X,Y:Y,xMin:xMin,xMax:xMax,yMin:yMin,yMax:yMax,pad:pad,iw:iw,ih:ih,w:w,h:h};
+  }
+
+  function overlay(mx){
+    if(!scales||!opts) return;
+    const xv=scales.xMin + (mx-scales.pad.l)/scales.iw*(scales.xMax-scales.xMin);
+    const ctx=canvas.getContext("2d");
+    ctx.save();
+    ctx.strokeStyle="rgba(255,255,255,.35)"; ctx.lineWidth=1; ctx.setLineDash([3,3]);
+    ctx.beginPath(); ctx.moveTo(mx,scales.pad.t); ctx.lineTo(mx,scales.h-scales.pad.b); ctx.stroke(); ctx.setLineDash([]);
+    const rows=[];
+    for(const s of opts.series){
+      if(s.hidden) continue;
+      const pts=s.points;
+      const idx=nearestIndex(pts, xv);
+      if(idx<0) continue;
+      const p=pts[idx];
+      if(!isFin(p.y)) continue;
+      const px=scales.X(p.x), py=scales.Y(p.y);
+      ctx.beginPath(); ctx.arc(px,py,3.2,0,6.283); ctx.fillStyle=s.color; ctx.fill();
+      ctx.strokeStyle="#0b0e14"; ctx.lineWidth=1; ctx.stroke();
+      rows.push({name:s.name, color:s.color, y:p.y, x:p.x, fmt:s.valueFormat||opts.yFormat});
+    }
+    ctx.restore();
+    if(rows.length){
+      const ttl = opts.tipTitle ? opts.tipTitle(rows[0].x) : (opts.xFormat?opts.xFormat(rows[0].x):"");
+      tip.innerHTML = (ttl?"<div class='ttl'>"+esc(ttl)+"</div>":"") +
+        rows.map(r=> "<div class='row'><span style='color:"+r.color+"'>"+esc(r.name)+"</span><b>"+esc(r.fmt?r.fmt(r.y):fmtNum(r.y))+"</b></div>").join("");
+      tip.style.display="block";
+      const tw=tip.offsetWidth, th=tip.offsetHeight;
+      let left = mx+14; if(left+tw > scales.w-6) left = mx-tw-14;
+      tip.style.left = Math.max(4,left)+"px";
+      tip.style.top = Math.max(4, scales.pad.t+4)+"px";
+    }
+  }
+
+  canvas.addEventListener("mousemove", function(e){
+    if(!scales) return;
+    const rect=canvas.getBoundingClientRect();
+    const mx=e.clientX-rect.left;
+    baseDraw(); overlay(mx);
+  });
+  canvas.addEventListener("mouseleave", function(){ tip.style.display="none"; baseDraw(); });
+
+  let ro=null;
+  if(window.ResizeObserver){ ro=new ResizeObserver(function(){ baseDraw(); }); ro.observe(canvas); }
+  return { render:function(o){ opts=o; baseDraw(); } };
+}
+
+function barChart(canvas, height){
+  const tip=document.createElement("div"); tip.className="tooltip";
+  canvas.parentElement.appendChild(tip);
+  let opts=null, bars=null, scales=null;
+
+  function baseDraw(){
+    const r=setupCanvas(canvas,height), ctx=r.ctx,w=r.w,h=r.h;
+    ctx.clearRect(0,0,w,h);
+    if(!opts) return;
+    const pad={l:56,r:14,t:12,b:26};
+    const iw=w-pad.l-pad.r, ih=h-pad.t-pad.b;
+    if(iw<=0||ih<=0) return;
+    const data=opts.bars;
+    let yMin=0,yMax=0; for(const b of data){ if(!isFin(b.y))continue; yMin=Math.min(yMin,b.y); yMax=Math.max(yMax,b.y); }
+    if(yMin===yMax) yMax=yMin+1;
+    const padY=(yMax-yMin)*0.08||1; yMin-=padY; yMax+=padY;
+    const n=data.length;
+    const X = i => pad.l + (i+0.5)/n*iw;
+    const Y = y => pad.t + ih - (y-yMin)/(yMax-yMin)*ih;
+    ctx.font="11px ui-monospace,SFMono-Regular,Menlo,monospace";
+    const gy=4;
+    for(let i=0;i<=gy;i++){
+      const v=yMin+(yMax-yMin)*i/gy, yy=Y(v);
+      ctx.strokeStyle="rgba(255,255,255,.07)";
+      ctx.beginPath(); ctx.moveTo(pad.l,yy); ctx.lineTo(w-pad.r,yy); ctx.stroke();
+      ctx.fillStyle="rgba(139,150,173,.9)"; ctx.textAlign="right"; ctx.textBaseline="middle";
+      ctx.fillText(opts.yFormat?opts.yFormat(v):fmtNum(v), pad.l-8, yy);
+    }
+    if(yMin<0&&yMax>0){ const y0=Y(0); ctx.strokeStyle="rgba(255,255,255,.28)"; ctx.setLineDash([4,4]);
+      ctx.beginPath(); ctx.moveTo(pad.l,y0); ctx.lineTo(w-pad.r,y0); ctx.stroke(); ctx.setLineDash([]); }
+    const bw=Math.max(1, iw/n*0.82);
+    for(let i=0;i<n;i++){
+      const b=data[i]; if(!isFin(b.y))continue;
+      const x=X(i), y0=Y(0), y1=Y(b.y);
+      ctx.fillStyle=b.y>=0? (opts.posColor||"#22c98a") : (opts.negColor||"#ff5c6c");
+      ctx.fillRect(x-bw/2, Math.min(y0,y1), bw, Math.max(1,Math.abs(y1-y0)));
+    }
+    scales={X:X,Y:Y,pad:pad,iw:iw,ih:ih,w:w,h:h,n:n};
+  }
+  function overlay(mx){
+    if(!scales||!opts) return;
+    const i=clamp(Math.floor((mx-scales.pad.l)/scales.iw*scales.n),0,scales.n-1);
+    const b=opts.bars[i]; if(!b) return;
+    const ctx=canvas.getContext("2d");
+    ctx.save(); ctx.strokeStyle="rgba(255,255,255,.3)"; ctx.setLineDash([3,3]);
+    ctx.beginPath(); ctx.moveTo(scales.X(i),scales.pad.t); ctx.lineTo(scales.X(i),scales.h-scales.pad.b); ctx.stroke(); ctx.restore();
+    tip.innerHTML="<div class='row'><span>"+esc(opts.label||"")+"</span><b>"+esc(opts.yFormat?opts.yFormat(b.y):fmtNum(b.y))+"</b></div>"+
+      (opts.subLabel?"<div class='ttl' style='border:0;margin:0'>"+esc(opts.subLabel)+"</div>":"");
+    tip.style.display="block";
+    let left=scales.X(i)+10; if(left+tip.offsetWidth>scales.w-6) left=scales.X(i)-tip.offsetWidth-10;
+    tip.style.left=Math.max(4,left)+"px"; tip.style.top="8px";
+  }
+  canvas.addEventListener("mousemove", function(e){ if(!scales)return; const rect=canvas.getBoundingClientRect(); const mx=e.clientX-rect.left; baseDraw(); overlay(mx); });
+  canvas.addEventListener("mouseleave", function(){ tip.style.display="none"; baseDraw(); });
+  if(window.ResizeObserver){ new ResizeObserver(function(){ baseDraw(); }).observe(canvas); }
+  return { render:function(o){ opts=o; baseDraw(); } };
+}
+
+/* =====================================================================
+   Rendering the dashboard
+   ===================================================================== */
+const eqChart  = lineChart($("#eqChart"), 300);
+const ddChart  = lineChart($("#ddChart"), 230);
+const rollChart= lineChart($("#rollChart"), 230);
+const histChart= barChart($("#histChart"), 230);
+const tradeChart=barChart($("#tradeChart"), 230);
+
+function render(){
+  const has = datasets.length>0;
+  $("#empty").hidden = has;
+  $("#dash").hidden = !has;
+  renderChips();
+  if(!has) return;
+  const ds = getActive();
+  renderMapping(ds);
+  const s = settings();
+  // recompute all stats (settings/date filter may have changed)
+  for(const d of datasets) d.stats = computeStats(d, s);
+  const st = ds.stats;
+  renderMetrics(ds, st);
+  renderEquity();
+  renderDrawdown(ds, st);
+  renderRolling(ds, st);
+  renderHist(ds, st);
+  renderHeatmap(ds, st);
+  renderTrades(ds, st);
+  renderTable(ds, st);
+  $("#eqSub").textContent = ds.name + " · " + (st.n? st.n+" pts":"no data") + (st.years? " · "+st.years.toFixed(1)+"y":"");
+  $("#rollSub").textContent = "window "+ (st.rollW||s.roll) + " periods";
+  $("#tradeSub").textContent = st.valid ? (st.tradeSource==="trades"? st.nTrades+" trades" : st.nTrades+" periods (from returns)") : "";
+  $("#tblSub").textContent = st.valid ? (st.tradeSource==="trades"? "realised trade P&L" : "per-period returns") : "";
+}
+
+/* ---- chips ---- */
+function renderChips(){
+  const wrap=$("#dsChips"); wrap.innerHTML="";
+  datasets.forEach(function(d){
+    const c=document.createElement("div");
+    c.className="chip"+(d.id===activeId?" active":"");
+    c.innerHTML = "<span class='dot' style='background:"+d.color+"'></span>"+
+      "<span class='eye'>"+(d.visible?"\u25C9":"\u25CB")+"</span>"+
+      "<span class='nm'>"+esc(d.name)+"</span>"+
+      "<span class='x' title='remove'>\u00D7</span>";
+    c.addEventListener("click", function(e){
+      if(e.target.classList.contains("x")){ datasets=datasets.filter(x=>x.id!==d.id); if(activeId===d.id) activeId=datasets.length?datasets[0].id:null; render(); return; }
+      if(e.target.classList.contains("eye")){ d.visible=!d.visible; render(); return; }
+      activeId=d.id; render();
+    });
+    wrap.appendChild(c);
+  });
+  const sel=$("#dsSelect"); sel.innerHTML="";
+  datasets.forEach(function(d){ const o=document.createElement("option"); o.value=d.id; o.textContent=d.name; sel.appendChild(o); });
+  if(getActive()) sel.value=getActive().id;
+}
+
+/* ---- mapping UI ---- */
+function renderMapping(ds){
+  const grid=$("#mapGrid"); grid.innerHTML="";
+  const defs=[["date","Date"],["equity","Equity / NAV"],["returns","Returns"],["tradePnl","Trade P&L"],["benchmark","Benchmark"]];
+  defs.forEach(function(def){
+    const key=def[0];
+    const f=document.createElement("div"); f.className="field";
+    const lab=document.createElement("label"); lab.textContent=def[1];
+    const sel=document.createElement("select");
+    const none=document.createElement("option"); none.value=""; none.textContent="\u2014 none \u2014"; sel.appendChild(none);
+    ds.header.forEach(function(h){ const o=document.createElement("option"); o.value=h; o.textContent=h; sel.appendChild(o); });
+    sel.value = ds.mapping[key] || "";
+    sel.addEventListener("change", function(){
+      ds.mapping[key] = sel.value || null;
+      seriesFromRows(ds); ds.stats=computeStats(ds,settings()); render();
+    });
+    f.appendChild(lab); f.appendChild(sel); grid.appendChild(f);
+  });
+}
+
+/* ---- metrics ---- */
+function metric(label, value, sub, cls){
+  return "<div class='metric'><div class='k'>"+esc(label)+"</div><div class='v "+(cls||"neutral")+"'>"+value+"</div>"+(sub?"<div class='s'>"+sub+"</div>":"")+"</div>";
+}
+function signCls(x){ return !isFin(x)?"neutral":(x>0?"pos":(x<0?"neg":"neutral")); }
+function renderMetrics(ds, st){
+  const wrap=$("#metrics");
+  if(!st.valid){ wrap.innerHTML="<div class='metric' style='grid-column:1/-1'><div class='k'>No usable data</div><div class='s'>Map an equity/value column or a returns column to see metrics.</div></div>"; return; }
+  const bh = ds.benchmarkEq ? (function(){
+    const e=ds.benchmarkEq.filter(v=>isFin(v)&&v>0); return e.length>1? e[e.length-1]/e[0]-1 : NaN;
+  })() : NaN;
+  const alpha = isFin(bh)? st.totalReturn - bh : NaN;
+  const card=[];
+  card.push(metric("Total Return", fmtPctSign(st.totalReturn), st.years?st.years.toFixed(1)+" years":"", signCls(st.totalReturn)));
+  card.push(metric("CAGR", fmtPctSign(st.cagr), "annualised", signCls(st.cagr)));
+  card.push(metric("Sharpe", fmtNum(st.sharpe,2), "rf "+(st.rf*100).toFixed(1)+"%", st.sharpe>1?"pos":(st.sharpe<0?"neg":"neutral")));
+  card.push(metric("Sortino", fmtNum(st.sortino,2), "", st.sortino>1?"pos":(st.sortino<0?"neg":"neutral")));
+  card.push(metric("Max Drawdown", fmtPct(st.maxdd), "", "neg"));
+  card.push(metric("Calmar", fmtNum(st.calmar,2), "", signCls(st.calmar)));
+  card.push(metric("Volatility", fmtPct(st.annVol), "annualised", "neutral"));
+  card.push(metric("Win Rate", fmtPct(st.winRate), st.nTrades+" "+(st.tradeSource==="trades"?"trades":"periods"), st.winRate>0.5?"pos":(st.winRate<0.5?"neg":"neutral")));
+  card.push(metric("Profit Factor", isFin(st.profitFactor)? st.profitFactor.toFixed(2):(st.profitFactor===Infinity?"\u221E":"\u2014"), "", st.profitFactor>1?"pos":(st.profitFactor<1?"neg":"neutral")));
+  card.push(metric("Expectancy", fmtPct(st.expectancy), "per "+(st.tradeSource==="trades"?"trade":"period"), signCls(st.expectancy)));
+  card.push(metric("Payoff", fmtNum(st.payoff,2), "avg win / avg loss", st.payoff>1?"pos":"neutral"));
+  card.push(metric("Best", fmtPctSign(st.best), "", "pos"));
+  card.push(metric("Worst", fmtPctSign(st.worst), "", "neg"));
+  card.push(metric("VaR 95%", fmtPct(st.var95), "1-period", "neutral"));
+  card.push(metric("CVaR 95%", fmtPct(st.cvar95), "expected shortfall", "neutral"));
+  card.push(metric("Max Win Streak", st.maxWinStreak, "", "pos"));
+  card.push(metric("Max Loss Streak", st.maxLossStreak, "", "neg"));
+  card.push(metric("Skew", fmtNum(st.skew,2), "kurt "+fmtNum(st.kurt,2), "neutral"));
+  if(isFin(bh)) card.push(metric("Buy & Hold", fmtPctSign(bh), "benchmark", signCls(bh)));
+  if(isFin(alpha)) card.push(metric("Alpha vs Bench", fmtPctSign(alpha), "", signCls(alpha)));
+  wrap.innerHTML = card.join("");
+}
+
+/* ---- equity chart ---- */
+function rebaseSeries(points, base){
+  let first=null;
+  for(const p of points){ if(isFin(p.y)&&p.y>0){ first=p.y; break; } }
+  if(first==null||first===0) return points;
+  const scale=base/first;
+  return points.map(p=>({x:p.x, y:isFin(p.y)?p.y*scale:NaN}));
+}
+function renderEquity(){
+  const base=parseFloat($("#baseInput").value)||100;
+  const series=[];
+  const legend=[];
+  datasets.forEach(function(d){
+    const st=d.stats;
+    if(!st||!st.valid) return;
+    let pts=[]; for(let i=0;i<st.E.length;i++) pts.push({x:isFin(st.D[i])?st.D[i]:i, y:st.E[i]});
+    if(normMode==="norm") pts=rebaseSeries(pts, base);
+    series.push({name:d.name+" (eq)", color:d.color, points:pts, hidden:!d.visible, width: d.id===activeId?2.4:1.7});
+    if(d.benchmarkEq){
+      let bm=[]; for(let i=0;i<d.benchmarkEq.length;i++){ const e=d.benchmarkEq[i]; if(isFin(e)){ const dt=isFin(d.dates[i])?d.dates[i]:i; bm.push({x:dt,y:e}); } }
+      if(normMode==="norm") bm=rebaseSeries(bm, base);
+      series.push({name:d.name+" (bench)", color:d.color, points:bm, hidden:!d.visible, dash:true, width:1.4});
+    }
+  });
+  // legend (only primary eq series toggles)
+  const leg=$("#eqLegend"); leg.innerHTML="";
+  datasets.forEach(function(d){
+    const item=document.createElement("div"); item.className="item"+(d.visible?"":" off");
+    item.innerHTML="<span class='swatch' style='background:"+d.color+"'></span>"+esc(d.name);
+    item.title="click to show/hide";
+    item.addEventListener("click", function(){ d.visible=!d.visible; render(); });
+    leg.appendChild(item);
+  });
+  eqChart.render({
+    series:series,
+    yFormat:function(v){ return normMode==="norm"? fmtNum(v,0) : fmtNum(v,0); },
+    xFormat:fmtDateShort,
+    tipTitle:fmtDate,
+    includeZero:false
+  });
+}
+
+/* ---- drawdown ---- */
+function renderDrawdown(ds, st){
+  if(!st.valid){ ddChart.render({series:[]}); return; }
+  let pts=[]; for(let i=0;i<st.underwater.length;i++) pts.push({x:isFin(st.D[i])?st.D[i]:i, y:st.underwater[i]});
+  ddChart.render({
+    series:[{name:ds.name, color:"#ff5c6c", points:pts, fill:"rgba(255,92,108,.18)", width:1.6}],
+    yFormat:function(v){ return fmtPct(v,0); },
+    xFormat:fmtDateShort,
+    tipTitle:fmtDate,
+    includeZero:true,
+    zeroAt:0
+  });
+}
+
+/* ---- rolling sharpe ---- */
+function renderRolling(ds, st){
+  if(!st.valid||!st.rollY||!st.rollY.length){ rollChart.render({series:[]}); return; }
+  const pts=[]; for(let i=0;i<st.rollY.length;i++) pts.push({x:st.rollX[i], y:st.rollY[i]});
+  const zero=[]; for(let i=0;i<pts.length;i++) zero.push({x:pts[i].x,y:0});
+  rollChart.render({
+    series:[
+      {name:"zero", color:"rgba(255,255,255,.25)", points:zero, width:1, dash:true},
+      {name:ds.name, color:ds.color, points:pts, width:1.8}
+    ],
+    yFormat:function(v){ return fmtNum(v,1); },
+    xFormat:fmtDateShort,
+    tipTitle:fmtDate,
+    includeZero:false
+  });
+}
+
+/* ---- histogram of returns ---- */
+function histBins(vals, nb){
+  nb=nb||31;
+  let mn=Infinity,mx=-Infinity;
+  for(const v of vals){ if(!isFin(v))continue; mn=Math.min(mn,v); mx=Math.max(mx,v); }
+  if(!isFin(mn)) return [];
+  if(mn===mx){ mx=mn+0.001; }
+  const width=(mx-mn)/nb;
+  const out=[]; for(let i=0;i<nb;i++) out.push({lo:mn+i*width, hi:mn+(i+1)*width, y:0});
+  for(const v of vals){ if(!isFin(v))continue; let i=Math.floor((v-mn)/width); if(i<0)i=0; if(i>=nb)i=nb-1; out[i].y++; }
+  return out;
+}
+function renderHist(ds, st){
+  if(!st.valid){ histChart.render({bars:[]}); return; }
+  const bins=histBins(st.returns, 41);
+  histChart.render({
+    bars:bins,
+    yFormat:function(v){ return fmtNum(v,0); },
+    label:"count",
+    subLabel:function(b){ return fmtPctSign(b.lo,1)+" to "+fmtPctSign(b.hi,1); }
+  });
+}
+
+/* ---- monthly heatmap ---- */
+function colorFor(r){
+  if(!isFin(r)) return "transparent";
+  const a=clamp(Math.abs(r)*6,0.08,0.95);
+  return r>=0 ? "rgba(34,201,138,"+a+")" : "rgba(255,92,108,"+a+")";
+}
+function renderHeatmap(ds, st){
+  const el=$("#heatmap");
+  if(!st.valid){ el.innerHTML="<div class='empty-note'>No data</div>"; return; }
+  const table=monthlyReturns(st);
+  if(!table){ el.innerHTML="<div class='empty-note'>Requires a parseable date column.</div>"; return; }
+  const years=Object.keys(table).sort();
+  if(!years.length){ el.innerHTML="<div class='empty-note'>No complete months.</div>"; return; }
+  const mo=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  let html="<table class='heat'><thead><tr><th style='text-align:left'>Year</th>";
+  for(const m of mo) html+="<th>"+m+"</th>";
+  html+="<th>YTD</th></tr></thead><tbody>";
+  for(const y of years){
+    html+="<tr><td class='year'>"+y+"</td>";
+    let ytd=1, any=false;
+    for(let m=0;m<12;m++){
+      const r=table[y][m];
+      if(isFin(r)){ ytd*=(1+r); any=true; }
+      html+="<td style='background:"+colorFor(r)+"' title='"+esc(y+" "+mo[m]+": "+(isFin(r)?fmtPctSign(r):"n/a"))+"'>"+(isFin(r)?(r*100).toFixed(1):"")+"</td>";
+    }
+    html+="<td style='background:"+colorFor(any?ytd-1:NaN)+"'>"+(any?((ytd-1)*100).toFixed(1):"")+"</td></tr>";
+  }
+  html+="</tbody></table>";
+  el.innerHTML=html;
+}
+
+/* ---- trade pnl distribution ---- */
+function renderTrades(ds, st){
+  if(!st.valid||!st.trades||st.trades.length<2){ tradeChart.render({bars:[]}); return; }
+  const vals=st.trades.map(function(v){ return st.tradeSource==="trades"? v : v; });
+  const bins=histBins(vals, Math.min(41, Math.max(15, Math.ceil(Math.sqrt(vals.length))*2)));
+  tradeChart.render({
+    bars:bins,
+    yFormat:function(v){ return fmtNum(v,0); },
+    label:"count",
+    subLabel:function(b){ return fmtPctSign(b.lo,2)+" to "+fmtPctSign(b.hi,2); }
+  });
+}
+
+/* ---- trade / period table ---- */
+function renderTable(ds, st){
+  const wrap=$("#tradeTable");
+  if(!st.valid){ wrap.innerHTML="<div class='empty-note'>No data</div>"; return; }
+  const isReal = st.tradeSource==="trades";
+  const rows=[];
+  if(isReal){
+    st.trades.forEach(function(v,i){ rows.push({i:i+1, r:v}); });
+  } else {
+    for(let i=0;i<st.returns.length;i++) rows.push({i:i+1, d:st.D[i+1]!==undefined?st.D[i+1]:st.D[i], r:st.returns[i]});
+  }
+  // summary strip on top
+  let html="<table class='data'><thead><tr><th>#</th>"+(isReal?"":"<th>Date</th>")+"<th>Return</th><th>Cumulative</th></tr></thead><tbody>";
+  let cum=1;
+  const maxRows=3000;
+  const start=Math.max(0, rows.length-maxRows);
+  for(let k=start;k<rows.length;k++){
+    const row=rows[k]; cum*=(1+row.r);
+    html+="<tr><td>"+row.i+"</td>"+(isReal?"":"<td>"+esc(fmtDate(row.d))+"</td>")+
+      "<td class='"+(row.r>=0?"pos":"neg")+"'>"+fmtPctSign(row.r,2)+"</td><td>"+fmtNum(cum,4)+"</td></tr>";
+  }
+  html+="</tbody></table>";
+  wrap.innerHTML=html;
+  if(rows.length>maxRows) wrap.insertAdjacentHTML("afterbegin","<div class='empty-note'>Showing last "+maxRows+" of "+rows.length+" rows</div>");
+}
+
+/* =====================================================================
+   File loading
+   ===================================================================== */
+function fileToDatasets(file){
+  const reader=new FileReader();
+  reader.onload=function(){
+    try{
+      const parsed=parseCSV(String(reader.result));
+      if(!parsed.header.length){ alert("Could not parse "+file.name); return; }
+      const name=file.name.replace(/\.[^.]+$/,"");
+      addDataset(name, parsed.header, parsed.rows, {});
+      render();
+    }catch(err){ console.error(err); alert("Failed to load "+file.name+": "+err.message); }
+  };
+  reader.readAsText(file);
+}
+function loadFiles(files){
+  Array.prototype.forEach.call(files, function(f){
+    if(/\.(csv|tsv|txt)$/i.test(f.name) || f.type.indexOf("text")===0 || f.type==="application/vnd.ms-excel") fileToDatasets(f);
+    else fileToDatasets(f);
+  });
+}
+
+/* =====================================================================
+   Demo data
+   ===================================================================== */
+function demoDates(nDays){
+  const out=[]; let d=Date.UTC(2020,0,2);
+  while(out.length<nDays){ const wd=new Date(d).getUTCDay(); if(wd!==0&&wd!==6) out.push(d); d+=86400000; }
+  return out;
+}
+function loadDemo(){
+  const rng=mulberry32(7); const gauss=makeGauss(rng);
+  const N=1512; const dates=demoDates(N);
+  // market benchmark: drift + vol
+  const mktR=[]; for(let i=0;i<N;i++) mktR.push(0.00035 + 0.0095*gauss());
+  // strategy A: momentum-ish, higher beta + selection
+  const aR=[]; for(let i=0;i<N;i++){ const m=mktR[i]; aR.push(0.00045 + 1.05*m + 0.004*gauss() + 0.0006*Math.sin(i/40)); }
+  // strategy B: mean-reversion, low vol, small positive
+  const bR=[]; let prev=0; for(let i=0;i<N;i++){ prev=mktR[i]; bR.push(0.00030 - 0.15*mktR[i] + 0.006*gauss()); }
+
+  const header=["date","equity","returns","benchmark"];
+  const rowsA=[]; let eq=100, bm=100;
+  for(let i=0;i<N;i++){ eq*=(1+aR[i]); bm*=(1+mktR[i]);
+    rowsA.push({date:fmtDate(dates[i]), equity:eq.toFixed(4), returns:aR[i].toFixed(6), benchmark:bm.toFixed(4)}); }
+
+  const headerB=["date","equity"];
+  const rowsB=[]; let eqB=100;
+  for(let i=0;i<N;i++){ eqB*=(1+bR[i]); rowsB.push({date:fmtDate(dates[i]), equity:eqB.toFixed(4)}); }
+
+  // trade pnl for A (roughly every ~3 days -> a "trade")
+  const trades=[]; for(let i=0;i<N;i+=3){ trades.push(((aR[i]+aR[i+1]+(aR[i+2]||0))/1)); }
+
+  const dsA=addDataset("Momentum", header, rowsA, {color:PALETTE[0]});
+  const dsB=addDataset("Mean Reversion", headerB, rowsB, {color:PALETTE[2]});
+  dsA.trades=trades; dsA.stats=computeStats(dsA, settings());
+  activeId=dsA.id;
+  render();
+}
+
+/* =====================================================================
+   Export
+   ===================================================================== */
+function exportMetrics(){
+  const s=settings();
+  const out={generated:new Date().toISOString(), settings:s, datasets:[]};
+  datasets.forEach(function(d){
+    const st=computeStats(d,s);
+    out.datasets.push({
+      name:d.name, mapping:d.mapping, periods:st.n, years:st.years,
+      total_return:st.totalReturn, cagr:st.cagr, volatility:st.annVol, sharpe:st.sharpe,
+      sortino:st.sortino, calmar:st.calmar, max_drawdown:st.maxdd, var95:st.var95, cvar95:st.cvar95,
+      win_rate:st.winRate, profit_factor:st.profitFactor, expectancy:st.expectancy, payoff:st.payoff,
+      best:st.best, worst:st.worst, skew:st.skew, kurtosis:st.kurt, n_trades:st.nTrades
+    });
+  });
+  const blob=new Blob([JSON.stringify(out,null,2)],{type:"application/json"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download="backtest_metrics.json"; a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); },1000);
+}
+
+/* =====================================================================
+   Event wiring
+   ===================================================================== */
+$("#fileInput").addEventListener("change", function(e){ loadFiles(e.target.files); e.target.value=""; });
+$("#demoBtn").addEventListener("click", function(){ if(!datasets.length) loadDemo(); else { loadDemo(); } });
+$("#clearBtn").addEventListener("click", function(){ datasets=[]; activeId=null; render(); });
+$("#exportBtn").addEventListener("click", exportMetrics);
+$("#printBtn").addEventListener("click", function(){ window.print(); });
+$("#dsSelect").addEventListener("change", function(e){ activeId=parseInt(e.target.value,10); render(); });
+$("#normSeg").addEventListener("click", function(e){
+  const b=e.target.closest("button"); if(!b) return;
+  $$("#normSeg button").forEach(x=>x.classList.remove("active")); b.classList.add("active");
+  normMode=b.dataset.mode; renderEquity();
+});
+["#ppySel","#rfInput","#rollInput","#startInput","#endInput","#baseInput","#ppyCustom"].forEach(function(sel){
+  document.addEventListener("change", function(e){ if(e.target.matches(sel)){ if(e.target.id==="baseInput") renderEquity(); else render(); } }, true);
+});
+$("#ppySel").addEventListener("change", function(){ $("#ppyCustomWrap").hidden = $("#ppySel").value!=="custom"; });
+
+// drag & drop
+const overlay=$("#dropOverlay"); let dragDepth=0;
+window.addEventListener("dragenter", function(e){ e.preventDefault(); dragDepth++; overlay.classList.add("on"); });
+window.addEventListener("dragover", function(e){ e.preventDefault(); });
+window.addEventListener("dragleave", function(e){ dragDepth--; if(dragDepth<=0){ dragDepth=0; overlay.classList.remove("on"); } });
+window.addEventListener("drop", function(e){
+  e.preventDefault(); dragDepth=0; overlay.classList.remove("on");
+  if(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) loadFiles(e.dataTransfer.files);
+});
+
+// keyboard shortcut: D = demo, O = open
+window.addEventListener("keydown", function(e){
+  if(e.target.tagName==="INPUT"||e.target.tagName==="SELECT") return;
+  if(e.key==="d"||e.key==="D") $("#demoBtn").click();
+  if(e.key==="o"||e.key==="O") $("#fileInput").click();
+});
+
+render();
+})();
+</script>
+</body>
+</html>
