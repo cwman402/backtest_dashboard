@@ -47,7 +47,8 @@ Configurable inputs: **periods per year** (252 daily default, or 365/52/12/4/876
 
 ## Charts
 
-- **Equity curve** — all loaded datasets overlaid; click a legend item to toggle.
+- **Equity curve** — all loaded datasets overlaid; click a line to inspect its
+  stats in a pop-out panel, shift-click a legend item to show/hide it.
 - **Drawdown** — underwater curve of the active dataset.
 - **Rolling Sharpe** — window configurable in the controls.
 - **Return distribution** — histogram of period returns.
@@ -56,14 +57,29 @@ Configurable inputs: **periods per year** (252 daily default, or 365/52/12/4/876
 
 ## Compare mode
 
-- **Rebased** (default) normalises every curve to a common base (default 100) so
-  strategies with different price levels line up; **Raw** shows absolute values.
+- **Rebased** (default) normalises every curve to a common base (configurable,
+  default 100) so strategies with different price levels line up; **Raw** shows
+  absolute values.
 - Toggle each dataset's visibility with the eye icon or the legend.
+
+## Portfolio
+
+When multiple datasets are loaded, the **Portfolio** card combines them:
+
+- Assign each strategy an **investment weight** and tick/untick it to include it
+  in the portfolio.
+- **Equal weight** resets every member to weight 1; **Normalize to 100%** scales
+  the selected weights so they sum to 1.
+- **Rebalance** mode: **Buy & hold** (weights drift with performance) or
+  **Daily** (rebalanced back to target each period).
+- Members are rebased to their **common start date** before combining, and the
+  combined curve appears in the equity chart alongside its own metrics.
 
 ## Export
 
-- **Export metrics** downloads a `backtest_metrics.json` with every computed
-  statistic per dataset (plus the detected mapping and settings).
+- **Export metrics** downloads a `backtest_metrics.json` containing the computed
+  statistics and detected mapping for every dataset, the portfolio composition
+  and performance, and the active settings.
 - **Print** produces a print-friendly report.
 
 ## Notes
