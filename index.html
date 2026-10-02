@@ -81,6 +81,18 @@
   .chip .x:hover{color:var(--red)}
   .chip .eye{opacity:.9}
 
+  /* portfolio builder rows */
+  .pfrow{display:flex;align-items:center;gap:8px;background:#0d111a;border:1px solid var(--line);
+    border-radius:9px;padding:5px 9px;font-size:12.5px}
+  .pfrow.off{opacity:.5}
+  .pfrow .dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+  .pfrow .nm{max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pfrow input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
+  .pfrow input[type=number]{width:66px;background:#0b0e14;border:1px solid var(--line);color:var(--text);
+    border-radius:6px;padding:4px 6px;font-size:12.5px;font-family:inherit}
+  .pfrow input[type=number]:disabled{opacity:.4}
+  .pfrow .pct{color:var(--muted);min-width:46px;text-align:right;font-variant-numeric:tabular-nums}
+
   /* metrics */
   .metrics{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:14px}
   .metric{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
@@ -104,6 +116,8 @@
   .legend .item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer;user-select:none}
   .legend .item.off{opacity:.4;text-decoration:line-through}
   .legend .swatch{width:14px;height:3px;border-radius:2px}
+  .legend .item.sel{color:var(--text);font-weight:600;text-decoration:none;opacity:1}
+  .legend .item.sel .swatch{box-shadow:0 0 0 2px rgba(255,255,255,.35)}
 
   /* tooltip */
   .tooltip{position:absolute;pointer-events:none;background:rgba(9,12,18,.96);border:1px solid var(--line);
@@ -116,7 +130,7 @@
   #heatmap{overflow-x:auto}
   table.heat{border-collapse:separate;border-spacing:3px;font-size:11px;width:100%}
   table.heat th{color:var(--muted);font-weight:600;font-size:10.5px;text-align:center;padding:2px 4px}
-  table.heat td{text-align:center;padding:5px 3px;border-radius:5px;font-variant-numeric:tabular-nums;color:#0b0e14;font-weight:600}
+  table.heat td{text-align:center;padding:5px 3px;border-radius:5px;font-variant-numeric:tabular-nums;color:#d6dce8;font-weight:600}
   table.heat td.year{color:var(--muted);font-weight:700;background:none!important}
 
   /* tables */
@@ -223,13 +237,41 @@
       <div class="mapgrid" id="mapGrid"></div>
     </div>
 
+    <div class="card" id="portfolioCard" style="margin-bottom:14px">
+      <h3>Portfolio <span class="sub">rebase every strategy to the same start date, assign weights, and view combined performance</span></h3>
+      <div class="controls" style="padding:0 0 10px;border:0">
+        <div class="field">
+          <label>Weighting</label>
+          <div style="display:flex;gap:8px">
+            <button class="btn" id="pfEqual">Equal weight</button>
+            <button class="btn" id="pfNormalize">Normalize to 100%</button>
+          </div>
+        </div>
+        <div class="spacer"></div>
+        <div class="field">
+          <label>Rebalance</label>
+          <div class="seg" id="pfRebal">
+            <button data-mode="drift" class="active">Buy &amp; hold</button>
+            <button data-mode="daily">Daily</button>
+          </div>
+        </div>
+      </div>
+      <div id="pfRows" class="datasets" style="border-top:0;padding:0 0 8px"></div>
+      <div id="pfNote" class="empty-note" style="display:none;padding:6px 0"></div>
+      <div class="metrics" id="pfMetrics" style="margin:12px 0 0"></div>
+    </div>
+
     <div class="metrics" id="metrics"></div>
 
     <div class="grid">
       <div class="card span2">
-        <h3>Equity Curve <span class="sub" id="eqSub"></span></h3>
+        <h3>Equity Curve <span class="sub" id="eqSub"></span> <span class="sub" style="margin-left:auto">click a line to inspect its stats</span></h3>
         <div class="legend" id="eqLegend"></div>
         <canvas id="eqChart" class="tall"></canvas>
+      </div>
+      <div class="card span2" id="selStats" hidden>
+        <h3 id="selStatsTitle"></h3>
+        <div class="metrics" id="selStatsBody" style="margin:0"></div>
       </div>
       <div class="card">
         <h3>Drawdown <span class="sub">underwater curve</span></h3>
@@ -430,6 +472,7 @@ let datasets = [];      // {id,name,color,visible,header,rows,mapping,dates,equi
 let activeId = null;
 let idSeq = 0;
 let normMode = "norm";
+let selectedSeries = null;   // null | "portfolio" | "ds:<id>" | "bench:<id>"
 
 function seriesFromRows(ds){
   const map = ds.mapping;
@@ -503,6 +546,8 @@ function addDataset(name, header, rows, opts){
     name: name,
     color: opts.color || PALETTE[datasets.length % PALETTE.length],
     visible: true,
+    inPortfolio: opts.inPortfolio !== false,
+    weight: opts.weight != null ? opts.weight : 1,
     header: header,
     rows: rows,
     mapping: opts.mapping && Object.keys(opts.mapping).length ? opts.mapping : detectMapping(header, rows)
@@ -785,8 +830,30 @@ function lineChart(canvas, height){
     const rect=canvas.getBoundingClientRect();
     const mx=e.clientX-rect.left;
     baseDraw(); overlay(mx);
+    // cursor: pointer when hovering near a line makes selection discoverable
+    canvas.style.cursor = opts && opts.clickSeries ? "pointer" : "default";
   });
   canvas.addEventListener("mouseleave", function(){ tip.style.display="none"; baseDraw(); });
+  canvas.addEventListener("click", function(e){
+    if(!opts||!opts.clickSeries||!scales) return;
+    const rect=canvas.getBoundingClientRect();
+    const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+    const xv=scales.xMin + (mx-scales.pad.l)/scales.iw*(scales.xMax-scales.xMin);
+    let best=null, bestD=Infinity;
+    for(const s of opts.series){
+      if(s.hidden || s.noSelect) continue;
+      const idx=nearestIndex(s.points, xv);
+      if(idx<0) continue;
+      const p=s.points[idx];
+      if(!isFin(p.x)||!isFin(p.y)) continue;
+      const dx=scales.X(p.x)-mx, dy=scales.Y(p.y)-my;
+      const d=Math.sqrt(dx*dx+dy*dy);
+      if(d<bestD){ bestD=d; best=s; }
+    }
+    const maxD=Math.max(14, Math.min(scales.iw,scales.ih)/6);
+    if(best && bestD<=maxD) opts.clickSeries(best);
+    else if(opts.clearSeries) opts.clearSeries();
+  });
 
   let ro=null;
   if(window.ResizeObserver){ ro=new ResizeObserver(function(){ baseDraw(); }); ro.observe(canvas); }
@@ -873,17 +940,21 @@ function render(){
   for(const d of datasets) d.stats = computeStats(d, s);
   const st = ds.stats;
   renderMetrics(ds, st);
+  renderPortfolio(s);
   renderEquity();
+  renderSelectedStats();
   renderDrawdown(ds, st);
   renderRolling(ds, st);
   renderHist(ds, st);
   renderHeatmap(ds, st);
   renderTrades(ds, st);
   renderTable(ds, st);
-  $("#eqSub").textContent = ds.name + " · " + (st.n? st.n+" pts":"no data") + (st.years? " · "+st.years.toFixed(1)+"y":"");
-  $("#rollSub").textContent = "window "+ (st.rollW||s.roll) + " periods";
-  $("#tradeSub").textContent = st.valid ? (st.tradeSource==="trades"? st.nTrades+" trades" : st.nTrades+" periods (from returns)") : "";
-  $("#tblSub").textContent = st.valid ? (st.tradeSource==="trades"? "realised trade P&L" : "per-period returns") : "";
+  const _rsel = resolveSelectedStats();
+  $("#eqSub").textContent = _rsel.title + " · " + (st.n? st.n+" pts":"no data") + (st.years? " · "+st.years.toFixed(1)+"y":"") + (selectedSeries? " · selected":"");
+  $("#rollSub").textContent = "window "+ (st.rollW||s.roll) + " periods · "+_rsel.title;
+  const _ust = _rsel.st || st;
+  $("#tradeSub").textContent = _ust.valid ? (_ust.tradeSource==="trades"? _ust.nTrades+" trades" : _ust.nTrades+" periods (from returns)") : "";
+  $("#tblSub").textContent = _ust.valid ? (_ust.tradeSource==="trades"? "realised trade P&L" : "per-period returns") : "";
 }
 
 /* ---- chips ---- */
@@ -964,6 +1035,121 @@ function renderMetrics(ds, st){
   wrap.innerHTML = card.join("");
 }
 
+/* =====================================================================
+   Portfolio builder
+   ===================================================================== */
+let rebalMode = "drift";   // "drift" = buy & hold, "daily" = rebalanced to target each period
+let pfCache = null;        // last built portfolio {st,E,D,strat,base} | {error} | null
+let pfPctEls = {};
+
+function memberWeight(d){ return parseFloat(d.weight) || 0; }
+function portfolioMembers(){ return datasets.filter(d => d.inPortfolio && memberWeight(d) > 0); }
+
+function buildPortfolio(s){
+  const members = portfolioMembers();
+  if(!members.length) return null;
+  // per-strategy date -> equity map (after the global date filter)
+  const maps = members.map(function(d){
+    const f = dateFilteredSeries(d, s);
+    const m = new Map();
+    for(let i=0;i<f.E.length;i++){ const dt=f.D[i]; if(isFin(dt)) m.set(dt, f.E[i]); }
+    return m;
+  });
+  // common start date = latest first date; keep only dates every strategy shares
+  const probe = maps.slice().sort((a,b)=>a.size-b.size)[0];
+  const common = [];
+  for(const dt of probe.keys()){
+    let ok = true;
+    for(let i=0;i<maps.length;i++){ if(!isFin(maps[i].get(dt))){ ok=false; break; } }
+    if(ok) common.push(dt);
+  }
+  common.sort((a,b)=>a-b);
+  if(common.length < 2) return {error:"Strategies share fewer than 2 common dates after the date filter."};
+  let wsum = 0; for(const d of members) wsum += memberWeight(d);
+  if(!(wsum > 0)) return {error:"Total weight must be positive."};
+  const strat = members.map(function(d,i){
+    const m = maps[i];
+    return {name:d.name, color:d.color, w:memberWeight(d)/wsum, vals:common.map(dt => m.get(dt))};
+  });
+  const base = parseFloat($("#baseInput").value) || 100;
+  const E = [];
+  if(rebalMode === "daily"){
+    let eq = base; E.push(eq);
+    for(let t=1;t<common.length;t++){
+      let pr = 0;
+      for(const sr of strat){ pr += sr.w * (sr.vals[t]/sr.vals[t-1] - 1); }
+      eq *= (1 + pr); E.push(eq);
+    }
+  } else {
+    for(let t=0;t<common.length;t++){
+      let v = 0;
+      for(const sr of strat){ v += sr.w * (sr.vals[t]/sr.vals[0]); }
+      E.push(base * v);
+    }
+  }
+  const pds = {name:"Portfolio", equity:E, dates:common, trades:null, benchmarkEq:null};
+  return {st:computeStats(pds, s), E:E, D:common, strat:strat, base:base};
+}
+
+function updateWeightPcts(){
+  const sum = datasets.filter(d=>d.inPortfolio).reduce((a,d)=>a+memberWeight(d),0);
+  datasets.forEach(function(d){
+    const el = pfPctEls[d.id]; if(!el) return;
+    el.textContent = !d.inPortfolio ? "off" : (sum>0 ? fmtPct(memberWeight(d)/sum,1) : "\u2014");
+  });
+}
+
+function renderPortfolioRows(){
+  const wrap = $("#pfRows"); wrap.innerHTML=""; pfPctEls = {};
+  if(!datasets.length){ wrap.innerHTML="<div class='empty-note'>No strategies loaded.</div>"; return; }
+  datasets.forEach(function(d){
+    const row = document.createElement("div");
+    row.className = "pfrow" + (d.inPortfolio ? "" : " off");
+    const cb = document.createElement("input"); cb.type="checkbox"; cb.checked = !!d.inPortfolio; cb.title="Include in portfolio";
+    cb.addEventListener("change", function(){ d.inPortfolio = cb.checked; render(); });
+    const dot = document.createElement("span"); dot.className="dot"; dot.style.background=d.color;
+    const nm = document.createElement("span"); nm.className="nm"; nm.textContent=d.name; nm.title=d.name;
+    const inp = document.createElement("input"); inp.type="number"; inp.min="0"; inp.step="0.1";
+    inp.value = d.weight!=null ? d.weight : 1; inp.title="Investment weight"; inp.disabled = !d.inPortfolio;
+    inp.addEventListener("input", function(){
+      const v = parseFloat(inp.value); d.weight = isFin(v) ? v : 0;
+      updatePortfolio(settings()); updateWeightPcts(); if(normMode==="norm") renderEquity();
+    });
+    const pct = document.createElement("span"); pct.className="pct"; pfPctEls[d.id]=pct;
+    row.appendChild(cb); row.appendChild(dot); row.appendChild(nm); row.appendChild(inp); row.appendChild(pct);
+    wrap.appendChild(row);
+  });
+  updateWeightPcts();
+}
+
+function renderPortfolioMetrics(s){
+  const m = $("#pfMetrics"), note = $("#pfNote");
+  const res = pfCache;
+  if(!res){ m.innerHTML=""; note.style.display=""; note.textContent="Add at least one strategy to build a portfolio."; return; }
+  if(res.error){ m.innerHTML=""; note.style.display=""; note.textContent=res.error; return; }
+  const st = res.st, card = [];
+  card.push(metric("Portfolio Return", fmtPctSign(st.totalReturn), st.years?st.years.toFixed(1)+" years":"", signCls(st.totalReturn)));
+  card.push(metric("CAGR", fmtPctSign(st.cagr), "annualised", signCls(st.cagr)));
+  card.push(metric("Sharpe", fmtNum(st.sharpe,2), "rf "+(st.rf*100).toFixed(1)+"%", st.sharpe>1?"pos":(st.sharpe<0?"neg":"neutral")));
+  card.push(metric("Sortino", fmtNum(st.sortino,2), "", st.sortino>1?"pos":(st.sortino<0?"neg":"neutral")));
+  card.push(metric("Max Drawdown", fmtPct(st.maxdd), "", "neg"));
+  card.push(metric("Calmar", fmtNum(st.calmar,2), "", signCls(st.calmar)));
+  card.push(metric("Volatility", fmtPct(st.annVol), "annualised", "neutral"));
+  card.push(metric("Win Rate", fmtPct(st.winRate), st.nTrades+" periods", st.winRate>0.5?"pos":(st.winRate<0.5?"neg":"neutral")));
+  card.push(metric("Profit Factor", isFin(st.profitFactor)?st.profitFactor.toFixed(2):(st.profitFactor===Infinity?"\u221E":"\u2014"), "", st.profitFactor>1?"pos":(st.profitFactor<1?"neg":"neutral")));
+  card.push(metric("Best", fmtPctSign(st.best), "", "pos"));
+  card.push(metric("Worst", fmtPctSign(st.worst), "", "neg"));
+  card.push(metric("VaR 95%", fmtPct(st.var95), "1-period", "neutral"));
+  m.innerHTML = card.join("");
+  note.style.display = "";
+  note.textContent = res.strat.length+" "+(res.strat.length===1?"strategy":"strategies")+
+    " \u00B7 common start "+(isFin(res.D[0])?fmtDate(res.D[0]):"\u2014")+
+    " \u00B7 "+res.D.length+" periods \u00B7 "+(rebalMode==="daily"?"daily rebalanced":"buy & hold");
+}
+
+function updatePortfolio(s){ pfCache = buildPortfolio(s); renderPortfolioMetrics(s); }
+function renderPortfolio(s){ renderPortfolioRows(); updatePortfolio(s); }
+
 /* ---- equity chart ---- */
 function rebaseSeries(points, base){
   let first=null;
@@ -972,29 +1158,68 @@ function rebaseSeries(points, base){
   const scale=base/first;
   return points.map(p=>({x:p.x, y:isFin(p.y)?p.y*scale:NaN}));
 }
+function seriesStatsFromPoints(points, s, label){
+  const vals=points.filter(p=>isFin(p.x)&&isFin(p.y)).sort((a,b)=>a.x-b.x);
+  const E=vals.map(p=>p.y), D=vals.map(p=>p.x);
+  const pds={name:label, equity:E, dates:D, trades:null, benchmarkEq:null};
+  return computeStats(pds, s);
+}
+
 function renderEquity(){
   const base=parseFloat($("#baseInput").value)||100;
   const series=[];
   const legend=[];
+  const s=settings();
+  // portfolio curve (rebuilt so it always starts on the common start date)
+  const pf = (pfCache && !pfCache.error) ? pfCache : buildPortfolio(s);
+  if(pf && !pf.error){
+    let ppts=[]; for(let i=0;i<pf.E.length;i++) ppts.push({x:pf.D[i], y:pf.E[i]});
+    if(normMode==="norm") ppts=rebaseSeries(ppts, base);
+    series.push({name:"Portfolio", color:"#ffffff", points:ppts, hidden:false, width:3,
+      sel:selectedSeries==="portfolio", stats:pf.st});
+  }
   datasets.forEach(function(d){
     const st=d.stats;
     if(!st||!st.valid) return;
     let pts=[]; for(let i=0;i<st.E.length;i++) pts.push({x:isFin(st.D[i])?st.D[i]:i, y:st.E[i]});
     if(normMode==="norm") pts=rebaseSeries(pts, base);
-    series.push({name:d.name+" (eq)", color:d.color, points:pts, hidden:!d.visible, width: d.id===activeId?2.4:1.7});
+    series.push({name:d.name+" (eq)", color:d.color, points:pts, hidden:!d.visible,
+      width: d.id===activeId?2.4:1.7, key:"ds:"+d.id, dsId:d.id, sel:selectedSeries==="ds:"+d.id, stats:st, noSelect:false});
     if(d.benchmarkEq){
-      let bm=[]; for(let i=0;i<d.benchmarkEq.length;i++){ const e=d.benchmarkEq[i]; if(isFin(e)){ const dt=isFin(d.dates[i])?d.dates[i]:i; bm.push({x:dt,y:e}); } }
+      const bstart = $("#startInput").value ? Date.parse($("#startInput").value) : null;
+      const bend   = $("#endInput").value ? Date.parse($("#endInput").value)+86400000 : null;
+      let bm=[]; for(let i=0;i<d.benchmarkEq.length;i++){
+        const e=d.benchmarkEq[i]; if(!isFin(e)) continue;
+        const dt=isFin(d.dates[i])?d.dates[i]:i;
+        if(isFin(dt)){ if(bstart!=null && dt<bstart) continue; if(bend!=null && dt>bend) continue; }
+        bm.push({x:dt,y:e});
+      }
+      if(bm.length && st.E.length){ const b0=bm[0].y, s0=st.E[0]; if(isFin(b0)&&b0!==0) bm=bm.map(p=>({x:p.x,y:p.y/b0*s0})); }
       if(normMode==="norm") bm=rebaseSeries(bm, base);
-      series.push({name:d.name+" (bench)", color:d.color, points:bm, hidden:!d.visible, dash:true, width:1.4});
+      series.push({name:d.name+" (bench)", color:d.color, points:bm, hidden:!d.visible, dash:true, width:1.4,
+        key:"bench:"+d.id, dsId:d.id, bench:true, sel:selectedSeries==="bench:"+d.id,
+        stats:seriesStatsFromPoints(bm, s, d.name+" benchmark")});
     }
   });
   // legend (only primary eq series toggles)
   const leg=$("#eqLegend"); leg.innerHTML="";
+  if(pf && !pf.error){
+    const pi=document.createElement("div"); pi.className="item"+(selectedSeries==="portfolio"?" sel":"");
+    pi.innerHTML="<span class='swatch' style='background:#ffffff'></span>Portfolio";
+    pi.style.cursor="pointer";
+    pi.addEventListener("click", function(){ selectedSeries = selectedSeries==="portfolio"?null:"portfolio"; render(); });
+    leg.appendChild(pi);
+  }
   datasets.forEach(function(d){
-    const item=document.createElement("div"); item.className="item"+(d.visible?"":" off");
+    const sel=selectedSeries==="ds:"+d.id;
+    const item=document.createElement("div"); item.className="item"+(d.visible?"":" off")+(sel?" sel":"");
     item.innerHTML="<span class='swatch' style='background:"+d.color+"'></span>"+esc(d.name);
-    item.title="click to show/hide";
-    item.addEventListener("click", function(){ d.visible=!d.visible; render(); });
+    item.title="click to inspect stats, shift-click to show/hide";
+    item.addEventListener("click", function(e){
+      if(e.shiftKey){ d.visible=!d.visible; render(); return; }
+      selectedSeries = sel ? null : "ds:"+d.id;
+      render();
+    });
     leg.appendChild(item);
   });
   eqChart.render({
@@ -1002,16 +1227,84 @@ function renderEquity(){
     yFormat:function(v){ return normMode==="norm"? fmtNum(v,0) : fmtNum(v,0); },
     xFormat:fmtDateShort,
     tipTitle:fmtDate,
-    includeZero:false
+    includeZero:false,
+    clickSeries:function(sel){
+      if(sel.bench) selectedSeries="bench:"+sel.dsId;
+      else if(sel.dsId) selectedSeries="ds:"+sel.dsId;
+      else       selectedSeries="portfolio";
+      render();
+    },
+    clearSeries:function(){ if(selectedSeries){ selectedSeries=null; render(); } }
   });
+}
+
+function resolveSelectedStats(){
+  let title=null, st=null, color="#fff", ds=null;
+  if(selectedSeries==="portfolio"){
+    const pf=(pfCache&&!pfCache.error)?pfCache:null;
+    if(pf){ title="Portfolio"; st=pf.st; color="#ffffff"; }
+  } else if(selectedSeries && selectedSeries.indexOf("ds:")===0){
+    const id=parseInt(selectedSeries.slice(3),10);
+    const d=datasets.find(x=>x.id===id);
+    if(d){ title=d.name; st=d.stats; color=d.color; ds=d; }
+  } else if(selectedSeries && selectedSeries.indexOf("bench:")===0){
+    const id=parseInt(selectedSeries.slice(6),10);
+    const d=datasets.find(x=>x.id===id);
+    if(d && d.benchmarkEq){
+      const s=settings();
+      const bstart=$("#startInput").value?Date.parse($("#startInput").value):null;
+      const bend=$("#endInput").value?Date.parse($("#endInput").value)+86400000:null;
+      let bm=[]; for(let i=0;i<d.benchmarkEq.length;i++){
+        const e=d.benchmarkEq[i]; if(!isFin(e)) continue;
+        const dt=isFin(d.dates[i])?d.dates[i]:i;
+        if(isFin(dt)){ if(bstart!=null&&dt<bstart) continue; if(bend!=null&&dt>bend) continue; }
+        bm.push({x:dt,y:e});
+      }
+      title=d.name+" (benchmark)"; st=seriesStatsFromPoints(bm,s,title); color=d.color; ds=d;
+    }
+  }
+  // fall back to the active dataset so every panel always has a curve to follow
+  if(!title){
+    const a=getActive();
+    if(a && a.stats){ title=a.name; st=a.stats; color=a.color; ds=a; }
+  }
+  return {title:title, st:st, color:color, ds:ds};
+}
+
+function renderSelectedStats(){
+  const wrap=$("#selStats");
+  const r=resolveSelectedStats();
+  if(!r.title){ wrap.hidden=true; return; }
+  wrap.hidden=false;
+  const sub=$("#selStatsTitle");
+  sub.innerHTML="<span class='swatch' style='background:"+r.color+";display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:7px;vertical-align:middle'></span>"+esc(r.title);
+  const st=r.st, card=[];
+  if(!st||!st.valid){ card.push(metric("No data","\u2014","","neutral")); }
+  else {
+    card.push(metric("Total Return", fmtPctSign(st.totalReturn), st.years?st.years.toFixed(1)+" years":"", signCls(st.totalReturn)));
+    card.push(metric("CAGR", fmtPctSign(st.cagr), "annualised", signCls(st.cagr)));
+    card.push(metric("Sharpe", fmtNum(st.sharpe,2), "rf "+(st.rf*100).toFixed(1)+"%", st.sharpe>1?"pos":(st.sharpe<0?"neg":"neutral")));
+    card.push(metric("Sortino", fmtNum(st.sortino,2), "", st.sortino>1?"pos":(st.sortino<0?"neg":"neutral")));
+    card.push(metric("Max Drawdown", fmtPct(st.maxdd), "", "neg"));
+    card.push(metric("Calmar", fmtNum(st.calmar,2), "", signCls(st.calmar)));
+    card.push(metric("Volatility", fmtPct(st.annVol), "annualised", "neutral"));
+    card.push(metric("Win Rate", fmtPct(st.winRate), st.nTrades+" periods", st.winRate>0.5?"pos":(st.winRate<0.5?"neg":"neutral")));
+    card.push(metric("Profit Factor", isFin(st.profitFactor)?st.profitFactor.toFixed(2):(st.profitFactor===Infinity?"\u221E":"\u2014"), "", st.profitFactor>1?"pos":(st.profitFactor<1?"neg":"neutral")));
+    card.push(metric("Best", fmtPctSign(st.best), "", "pos"));
+    card.push(metric("Worst", fmtPctSign(st.worst), "", "neg"));
+    card.push(metric("VaR 95%", fmtPct(st.var95), "1-period", "neutral"));
+  }
+  $("#selStatsBody").innerHTML=card.join("");
 }
 
 /* ---- drawdown ---- */
 function renderDrawdown(ds, st){
-  if(!st.valid){ ddChart.render({series:[]}); return; }
-  let pts=[]; for(let i=0;i<st.underwater.length;i++) pts.push({x:isFin(st.D[i])?st.D[i]:i, y:st.underwater[i]});
+  const r=resolveSelectedStats();
+  const useSt=r.st;
+  if(!useSt||!useSt.valid){ ddChart.render({series:[]}); return; }
+  let pts=[]; for(let i=0;i<useSt.underwater.length;i++) pts.push({x:isFin(useSt.D[i])?useSt.D[i]:i, y:useSt.underwater[i]});
   ddChart.render({
-    series:[{name:ds.name, color:"#ff5c6c", points:pts, fill:"rgba(255,92,108,.18)", width:1.6}],
+    series:[{name:r.title, color:r.color, points:pts, fill:"rgba(255,92,108,.18)", width:1.8}],
     yFormat:function(v){ return fmtPct(v,0); },
     xFormat:fmtDateShort,
     tipTitle:fmtDate,
@@ -1022,13 +1315,15 @@ function renderDrawdown(ds, st){
 
 /* ---- rolling sharpe ---- */
 function renderRolling(ds, st){
-  if(!st.valid||!st.rollY||!st.rollY.length){ rollChart.render({series:[]}); return; }
-  const pts=[]; for(let i=0;i<st.rollY.length;i++) pts.push({x:st.rollX[i], y:st.rollY[i]});
+  const r=resolveSelectedStats();
+  const useSt=r.st;
+  if(!useSt||!useSt.valid||!useSt.rollY||!useSt.rollY.length){ rollChart.render({series:[]}); return; }
+  const pts=[]; for(let i=0;i<useSt.rollY.length;i++) pts.push({x:useSt.rollX[i], y:useSt.rollY[i]});
   const zero=[]; for(let i=0;i<pts.length;i++) zero.push({x:pts[i].x,y:0});
   rollChart.render({
     series:[
       {name:"zero", color:"rgba(255,255,255,.25)", points:zero, width:1, dash:true},
-      {name:ds.name, color:ds.color, points:pts, width:1.8}
+      {name:r.title, color:r.color, points:pts, width:1.8}
     ],
     yFormat:function(v){ return fmtNum(v,1); },
     xFormat:fmtDateShort,
@@ -1050,8 +1345,10 @@ function histBins(vals, nb){
   return out;
 }
 function renderHist(ds, st){
-  if(!st.valid){ histChart.render({bars:[]}); return; }
-  const bins=histBins(st.returns, 41);
+  const r=resolveSelectedStats();
+  const useSt=r.st;
+  if(!useSt||!useSt.valid){ histChart.render({bars:[]}); return; }
+  const bins=histBins(useSt.returns, 41);
   histChart.render({
     bars:bins,
     yFormat:function(v){ return fmtNum(v,0); },
@@ -1068,8 +1365,10 @@ function colorFor(r){
 }
 function renderHeatmap(ds, st){
   const el=$("#heatmap");
-  if(!st.valid){ el.innerHTML="<div class='empty-note'>No data</div>"; return; }
-  const table=monthlyReturns(st);
+  const r=resolveSelectedStats();
+  const useSt=r.st;
+  if(!useSt||!useSt.valid){ el.innerHTML="<div class='empty-note'>No data</div>"; return; }
+  const table=monthlyReturns(useSt);
   if(!table){ el.innerHTML="<div class='empty-note'>Requires a parseable date column.</div>"; return; }
   const years=Object.keys(table).sort();
   if(!years.length){ el.innerHTML="<div class='empty-note'>No complete months.</div>"; return; }
@@ -1081,9 +1380,9 @@ function renderHeatmap(ds, st){
     html+="<tr><td class='year'>"+y+"</td>";
     let ytd=1, any=false;
     for(let m=0;m<12;m++){
-      const r=table[y][m];
-      if(isFin(r)){ ytd*=(1+r); any=true; }
-      html+="<td style='background:"+colorFor(r)+"' title='"+esc(y+" "+mo[m]+": "+(isFin(r)?fmtPctSign(r):"n/a"))+"'>"+(isFin(r)?(r*100).toFixed(1):"")+"</td>";
+      const rr=table[y][m];
+      if(isFin(rr)){ ytd*=(1+rr); any=true; }
+      html+="<td style='background:"+colorFor(rr)+"' title='"+esc(y+" "+mo[m]+": "+(isFin(rr)?fmtPctSign(rr):"n/a"))+"'>"+(isFin(rr)?(rr*100).toFixed(1):"")+"</td>";
     }
     html+="<td style='background:"+colorFor(any?ytd-1:NaN)+"'>"+(any?((ytd-1)*100).toFixed(1):"")+"</td></tr>";
   }
@@ -1093,8 +1392,10 @@ function renderHeatmap(ds, st){
 
 /* ---- trade pnl distribution ---- */
 function renderTrades(ds, st){
-  if(!st.valid||!st.trades||st.trades.length<2){ tradeChart.render({bars:[]}); return; }
-  const vals=st.trades.map(function(v){ return st.tradeSource==="trades"? v : v; });
+  const r=resolveSelectedStats();
+  const useSt=r.st;
+  if(!useSt||!useSt.valid||!useSt.trades||useSt.trades.length<2){ tradeChart.render({bars:[]}); return; }
+  const vals=useSt.trades;
   const bins=histBins(vals, Math.min(41, Math.max(15, Math.ceil(Math.sqrt(vals.length))*2)));
   tradeChart.render({
     bars:bins,
@@ -1107,15 +1408,16 @@ function renderTrades(ds, st){
 /* ---- trade / period table ---- */
 function renderTable(ds, st){
   const wrap=$("#tradeTable");
-  if(!st.valid){ wrap.innerHTML="<div class='empty-note'>No data</div>"; return; }
-  const isReal = st.tradeSource==="trades";
+  const r=resolveSelectedStats();
+  const useSt=r.st;
+  if(!useSt||!useSt.valid){ wrap.innerHTML="<div class='empty-note'>No data</div>"; return; }
+  const isReal = useSt.tradeSource==="trades";
   const rows=[];
   if(isReal){
-    st.trades.forEach(function(v,i){ rows.push({i:i+1, r:v}); });
+    useSt.trades.forEach(function(v,i){ rows.push({i:i+1, r:v}); });
   } else {
-    for(let i=0;i<st.returns.length;i++) rows.push({i:i+1, d:st.D[i+1]!==undefined?st.D[i+1]:st.D[i], r:st.returns[i]});
+    for(let i=0;i<useSt.returns.length;i++) rows.push({i:i+1, d:useSt.D[i+1]!==undefined?useSt.D[i+1]:useSt.D[i], r:useSt.returns[i]});
   }
-  // summary strip on top
   let html="<table class='data'><thead><tr><th>#</th>"+(isReal?"":"<th>Date</th>")+"<th>Return</th><th>Cumulative</th></tr></thead><tbody>";
   let cum=1;
   const maxRows=3000;
@@ -1162,6 +1464,7 @@ function demoDates(nDays){
   return out;
 }
 function loadDemo(){
+  datasets=[]; activeId=null; pfCache=null;
   const rng=mulberry32(7); const gauss=makeGauss(rng);
   const N=1512; const dates=demoDates(N);
   // market benchmark: drift + vol
@@ -1195,7 +1498,17 @@ function loadDemo(){
    ===================================================================== */
 function exportMetrics(){
   const s=settings();
-  const out={generated:new Date().toISOString(), settings:s, datasets:[]};
+  const out={generated:new Date().toISOString(), settings:s, portfolio_rebalance:rebalMode, datasets:[]};
+  const pf=buildPortfolio(s);
+  if(pf && !pf.error){
+    const x=pf.st;
+    out.portfolio={
+      weighting:rebalMode, common_start:isFin(pf.D[0])?fmtDate(pf.D[0]):null, periods:x.n,
+      members:pf.strat.map(function(r){ return {name:r.name, weight:r.w}; }),
+      performance:{ total_return:x.totalReturn, cagr:x.cagr, volatility:x.annVol, sharpe:x.sharpe,
+        sortino:x.sortino, calmar:x.calmar, max_drawdown:x.maxdd, var95:x.var95, cvar95:x.cvar95, win_rate:x.winRate }
+    };
+  }
   datasets.forEach(function(d){
     const st=computeStats(d,s);
     out.datasets.push({
@@ -1217,7 +1530,18 @@ function exportMetrics(){
    ===================================================================== */
 $("#fileInput").addEventListener("change", function(e){ loadFiles(e.target.files); e.target.value=""; });
 $("#demoBtn").addEventListener("click", function(){ if(!datasets.length) loadDemo(); else { loadDemo(); } });
-$("#clearBtn").addEventListener("click", function(){ datasets=[]; activeId=null; render(); });
+$("#clearBtn").addEventListener("click", function(){ datasets=[]; activeId=null; pfCache=null; render(); });
+$("#pfEqual").addEventListener("click", function(){ datasets.forEach(function(d){ d.weight=1; }); renderPortfolioRows(); render(); });
+$("#pfNormalize").addEventListener("click", function(){
+  const sel=datasets.filter(d=>d.inPortfolio&&memberWeight(d)>0); const sum=sel.reduce((a,d)=>a+memberWeight(d),0);
+  if(sum>0) sel.forEach(function(d){ d.weight=d.weight/sum; });
+  renderPortfolioRows(); render();
+});
+$("#pfRebal").addEventListener("click", function(e){
+  const b=e.target.closest("button"); if(!b) return;
+  $$("#pfRebal button").forEach(x=>x.classList.remove("active")); b.classList.add("active");
+  rebalMode=b.dataset.mode; updatePortfolio(settings()); if(normMode==="norm") renderEquity();
+});
 $("#exportBtn").addEventListener("click", exportMetrics);
 $("#printBtn").addEventListener("click", function(){ window.print(); });
 $("#dsSelect").addEventListener("change", function(e){ activeId=parseInt(e.target.value,10); render(); });
@@ -1227,7 +1551,15 @@ $("#normSeg").addEventListener("click", function(e){
   normMode=b.dataset.mode; renderEquity();
 });
 ["#ppySel","#rfInput","#rollInput","#startInput","#endInput","#baseInput","#ppyCustom"].forEach(function(sel){
-  document.addEventListener("change", function(e){ if(e.target.matches(sel)){ if(e.target.id==="baseInput") renderEquity(); else render(); } }, true);
+  document.addEventListener("change", function(e){ if(e.target.matches(sel)){ if(e.target.id==="baseInput"){ updatePortfolio(settings()); renderEquity(); } else render(); } }, true);
+});
+// live redraw while picking/typing dates and numbers
+["#ppyCustom","#rfInput","#rollInput","#startInput","#endInput","#baseInput"].forEach(function(sel){
+  document.addEventListener("input", function(e){
+    if(!e.target.matches(sel)) return;
+    if(e.target.id==="baseInput"){ updatePortfolio(settings()); renderEquity(); }
+    else render();
+  }, true);
 });
 $("#ppySel").addEventListener("change", function(){ $("#ppyCustomWrap").hidden = $("#ppySel").value!=="custom"; });
 
