@@ -18,6 +18,49 @@ Keyboard shortcuts: `O` = open files, `D` = demo.
 
 Multiple files can be loaded at once; each becomes a dataset you can compare.
 
+## Command line (`bt.py`)
+
+`bt.py` is the same analysis without a browser: it loads one or more CSVs,
+blends them into one portfolio and prints stats plus a chart.
+
+```bash
+./bt.py a.csv b.csv -w 60,40                 # 60/40 split of every period's returns
+./bt.py a.csv b.csv -w a=70,b=30 --rf 2      # weights by name, 2% risk-free
+./bt.py *.csv --ppy 12 --start 2022-01-01 -f both -o out/report.png
+```
+
+Weights follow the file order when given as a list (`-w 60,40`) or may name a
+file/stem (`-w a=70,b=30`). With no `-w` the files are equal-weighted. The blend
+applies the weights to each period's returns and renormalises across whichever
+strategies are live, so a strategy that starts later simply joins at its first
+date (`--strict` instead trims the warmup so everything starts together).
+
+| Flag | Meaning |
+|------|---------|
+| `-w, --weight` | allocations, list or `name=pct` pairs (repeatable) |
+| `--rebalance` | `rebalanced` (default) or `buyhold` (weights drift) |
+| `--ppy` | periods per year: 252 default, use 12 for monthly, 52 weekly, 365 crypto |
+| `--rf` | risk-free rate % per year (default 0) |
+| `--roll` | rolling Sharpe window in periods (default 63) |
+| `--start`, `--end` | inclusive date filter |
+| `-o`, `-f`, `--dpi` | output path, format (`all` default = png+jpg+svg+pdf, or `png`/`jpg`/`both`/`svg`/`pdf`), raster DPI |
+| `--json PATH` | also write metrics JSON |
+| `--strict` | drop the warmup so every strategy is live from the first period |
+| `--list` | show the auto-detected column mapping and exit |
+| `--no-chart` | stats only |
+
+The chart is a single figure with the equity curves (components + blend),
+drawdown, rolling Sharpe and a monthly-return heatmap. Every run writes it as
+`report.png`, `report.jpg`, `report.svg` and `report.pdf` unless `-f` picks a
+single format. Column detection,
+percent/fraction handling and the metric formulas are the same as `index.html`;
+`bt.py` needs only Python 3 with pandas, numpy and matplotlib.
+
+Caveats: when a curve has to be built from trade P&L the risk metrics are
+approximate (they assume one unit per period), and the blend aligns strategies
+on the union of their dates — mixing daily and monthly files is allowed but the
+result is only meaningful if the frequencies match.
+
 ## What it accepts
 
 Column detection is automatic, and every dataset exposes **overridable
@@ -47,8 +90,8 @@ Configurable inputs: **periods per year** (252 daily default, or 365/52/12/4/876
 
 ## Charts
 
-- **Equity curve** — all loaded datasets overlaid; click a line to inspect its
-  stats in a pop-out panel, shift-click a legend item to show/hide it.
+- **Equity curve** — all loaded datasets overlaid; click a legend item (or the
+  chip's eye icon) to show/hide a dataset.
 - **Drawdown** — underwater curve of the active dataset.
 - **Rolling Sharpe** — window configurable in the controls.
 - **Return distribution** — histogram of period returns.
@@ -62,18 +105,19 @@ Configurable inputs: **periods per year** (252 daily default, or 365/52/12/4/876
   absolute values.
 - Toggle each dataset's visibility with the eye icon or the legend.
 
-## Portfolio
+## Weighted blend
 
-When multiple datasets are loaded, the **Portfolio** card combines them:
+When multiple datasets are loaded, set an allocation weight on each dataset chip
+(percentages, shown with a Σ total) and switch **Weighted blend** to **On**:
 
-- Assign each strategy an **investment weight** and tick/untick it to include it
-  in the portfolio.
-- **Equal weight** resets every member to weight 1; **Normalize to 100%** scales
-  the selected weights so they sum to 1.
-- **Rebalance** mode: **Buy & hold** (weights drift with performance) or
-  **Daily** (rebalanced back to target each period).
-- Members are rebased to their **common start date** before combining, and the
-  combined curve appears in the equity chart alongside its own metrics.
+- The blend is the weighted sum of each dataset's **period returns**,
+  renormalised across whichever datasets have data at that date, so a strategy
+  that starts later simply joins at its first date.
+- It appears as a white line in the equity chart; pick `— Blend · weighted —` in
+  the **Dataset** dropdown to drive the metrics, drawdown, rolling Sharpe and
+  trade panels from it.
+- The CLI (`bt.py --rebalance buyhold`) can also let weights drift instead of
+  rebalancing each period.
 
 ## Export
 
