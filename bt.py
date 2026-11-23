@@ -7,11 +7,16 @@ combines them into a weighted portfolio (rebalanced each period) and prints
 performance stats, plus an equity / drawdown / rolling-Sharpe / monthly-return
 report as PNG, JPG, SVG and PDF (all written by default).
 
+Blend weights are manual/equal by default; --weighting also offers inverse
+volatility (riskparity), inverse max drawdown, Sharpe and Calmar weighting,
+mirroring the weighting options in index.html.
+
 Examples
 --------
   ./bt.py sample.csv
   ./bt.py a.csv b.csv -w 60,40
   ./bt.py a.csv b.csv -w a=70 -w b=30 --rf 2 --ppy 252 -f both
+  ./bt.py a.csv b.csv --weighting riskparity
   ./bt.py *.csv --start 2022-01-01 --end 2023-12-31 -o out/q4.png
 """
 
@@ -322,6 +327,59 @@ def stdev(a, mu=None):
     return float(np.sqrt(((a - mu) ** 2).sum() / (a.size - 1)))
 
 
+def _clean_curve(curve: pd.Series) -> np.ndarray:
+    clean = curve.dropna()
+    clean = clean[np.isfinite(clean.to_numpy(dtype=float)) & (clean.to_numpy(dtype=float) > 0)]
+    return clean.to_numpy(dtype=float)
+
+
+def annual_vol(curve: pd.Series, ppy: int) -> float:
+    """Annualised stdev of period returns, matching compute_stats' annVol."""
+    e = _clean_curve(curve)
+    if e.size < 3:
+        return float("nan")
+    return stdev(e[1:] / e[:-1] - 1.0) * math.sqrt(ppy)
+
+
+def max_drawdown(curve: pd.Series) -> float:
+    """Deepest peak-to-trough loss (<= 0), matching compute_stats' maxdd."""
+    e = _clean_curve(curve)
+    if e.size < 2:
+        return float("nan")
+    peak, mdd = e[0], 0.0
+    for v in e:
+        peak = max(peak, v)
+        mdd = min(mdd, v / peak - 1.0)
+    return float(mdd)
+
+
+def sharpe_ratio(curve: pd.Series, ppy: int, rf: float) -> float:
+    """Annualised Sharpe ratio, matching compute_stats' sharpe."""
+    e = _clean_curve(curve)
+    if e.size < 3:
+        return float("nan")
+    r = e[1:] / e[:-1] - 1.0
+    sd = stdev(r)
+    if not (sd > 0):
+        return float("nan")
+    return (float(r.mean()) * ppy - rf) / (sd * math.sqrt(ppy))
+
+
+def calmar_ratio(curve: pd.Series, ppy: int) -> float:
+    """CAGR / |max drawdown|, matching compute_stats' calmar."""
+    e = _clean_curve(curve)
+    if e.size < 2:
+        return float("nan")
+    years = (e.size - 1) / ppy
+    if not (years > 0):
+        return float("nan")
+    mdd = max_drawdown(curve)
+    if not (mdd < 0):
+        return float("nan")
+    cagr = (e[-1] / e[0]) ** (1.0 / years) - 1.0
+    return float(cagr / abs(mdd))
+
+
 def compute_stats(equity: pd.Series, ppy: int, rf: float, roll: int, trades=None) -> dict:
     clean = equity.dropna()
     clean = clean[np.isfinite(clean.to_numpy(dtype=float)) & (clean.to_numpy(dtype=float) > 0)]
@@ -539,6 +597,62 @@ def apply_weights(datasets, specs):
     return weights
 
 
+DD_FLOOR = 1e-4  # 0.01%: keeps a drawdown-free curve's inverse weight finite
+
+
+def apply_weighting(datasets, mode: str, ppy: int, rf: float = 0.0):
+    """Set blend weights for the chosen scheme (mirrors index.html).
+
+    manual      keep whatever -w / apply_weights resolved (equal when omitted)
+    equal       1/N across every loaded dataset
+    riskparity  inverse volatility, w_i ∝ 1/σ_i, normalised to 1, with σ the
+                annualised stdev of period returns over the loaded date range
+    drawdown    inverse max drawdown, w_i ∝ 1/|maxDD_i| (deeper losses get a
+                smaller share; a 0% drawdown is floored at 0.01%)
+    sharpe      w_i ∝ Sharpe_i over the loaded sample (rf and ppy aware)
+    calmar      w_i ∝ Calmar_i = CAGR / |maxDD|
+
+    Ratio schemes ignore non-positive/undefined values; any scheme falls back
+    to equal weights when no dataset has a usable estimate, and datasets with a
+    zero share sit out of the blend.
+    """
+    if mode == "manual":
+        return
+    if mode == "equal":
+        for d in datasets:
+            d.weight = 1.0
+        return
+
+    raw = {}
+    for d in datasets:
+        if mode == "riskparity":
+            v = annual_vol(d.curve, ppy)
+            raw[d.name] = 1.0 / v if math.isfinite(v) and v > 0 else float("nan")
+        elif mode == "drawdown":
+            v = max_drawdown(d.curve)
+            raw[d.name] = 1.0 / max(abs(v), DD_FLOOR) if math.isfinite(v) else float("nan")
+        elif mode == "sharpe":
+            v = sharpe_ratio(d.curve, ppy, rf)
+            raw[d.name] = v if math.isfinite(v) and v > 0 else float("nan")
+        else:  # calmar
+            v = calmar_ratio(d.curve, ppy)
+            raw[d.name] = v if math.isfinite(v) and v > 0 else float("nan")
+
+    usable = {name: v for name, v in raw.items() if math.isfinite(v) and v > 0}
+    if not usable:
+        print(
+            f"bt.py: warning: no usable risk/return estimates for --weighting {mode}"
+            " - using equal weights",
+            file=sys.stderr,
+        )
+        for d in datasets:
+            d.weight = 1.0
+        return
+    total = sum(usable.values())
+    for d in datasets:
+        d.weight = usable.get(d.name, 0.0) / total
+
+
 # --------------------------------------------------------------------------
 # Blending
 # --------------------------------------------------------------------------
@@ -567,9 +681,12 @@ def align(datasets):
 
 
 def blend(datasets, mode="rebalanced", base=100.0, strict=False):
-    grid, aligned = align(datasets)
+    active = [d for d in datasets if d.weight > 0]
+    if not active:
+        raise SystemExit("bt.py: no dataset has a positive weight")
+    grid, aligned = align(active)
     frame = pd.DataFrame(aligned)
-    weights = pd.Series({d.name: d.weight for d in datasets}, dtype=float)
+    weights = pd.Series({d.name: d.weight for d in active}, dtype=float)
     weights = weights / weights.sum()
 
     if mode == "buyhold":
@@ -660,9 +777,11 @@ def print_report(datasets, blend_stats, settings, coverage, out_paths):
 
     total_w = label_w + sum(widths) + 2 * len(widths) + 2
     bar = "─" * min(total_w, 190)
+    scheme = settings.get("weighting", "manual")
+    scheme_txt = "" if scheme == "manual" else f" · {scheme}"
 
     print()
-    print(f"  Backtest blend · {settings['mode']} · {settings['ppy']}/yr · rf {settings['rf'] * 100:.2f}%")
+    print(f"  Backtest blend · {settings['mode']}{scheme_txt} · {settings['ppy']}/yr · rf {settings['rf'] * 100:.2f}%")
     print(f"  {bar}")
     print("  " + "Dataset".ljust(label_w) + "".join(f"{n:>{w + 2}}" for n, w in zip(cols, widths)))
     print(f"  {bar}")
@@ -671,7 +790,7 @@ def print_report(datasets, blend_stats, settings, coverage, out_paths):
         print(line)
     print(f"  {bar}")
 
-    print("\n  Composition")
+    print("\n  Composition" + ("" if scheme == "manual" else f" · {scheme}"))
     wsum = sum(d.weight for d in datasets)
     for d in datasets:
         pct = (d.weight / wsum * 100) if wsum else 0
@@ -680,8 +799,17 @@ def print_report(datasets, blend_stats, settings, coverage, out_paths):
             note = "  (curve built from trade P&L - risk metrics approximate)"
         elif d.source == "returns":
             note = "  (curve compounded from returns)"
+        metric_note = ""
+        if scheme == "riskparity":
+            metric_note = f"   vol {_pct(d.stats.get('annVol'), 1)}/yr"
+        elif scheme == "drawdown":
+            metric_note = f"   max DD {_pct(d.stats.get('maxdd'), 1)}"
+        elif scheme == "sharpe":
+            metric_note = f"   Sharpe {_num(d.stats.get('sharpe'), 2)}"
+        elif scheme == "calmar":
+            metric_note = f"   Calmar {_num(d.stats.get('calmar'), 2)}"
         print(
-            f"    {d.name:<16} {pct:6.1f}%   {d.path}"
+            f"    {d.name:<16} {pct:6.1f}%{metric_note}   {d.path}"
             f"\n    {'':<16} {len(d.curve)} rows · {d.describe()}{note}"
         )
     cov = coverage.dropna().to_numpy() if len(coverage.dropna()) else np.array([])
@@ -729,22 +857,26 @@ def make_chart(datasets, equity, bstats, settings, coverage, path, fmt, dpi, bas
     ax_hm = fig.add_subplot(gs[3, :])
 
     # ---- equity: components rebased, blend bold on top
+    active = [d for d in datasets if d.weight > 0]
+    wsum = sum(d.weight for d in active) or 1.0
     if len(datasets) > 1:
-        for d in datasets:
+        for d in active:
             c = d.curve
             scale = base / float(c.iloc[0])
             ax_eq.plot(c.index, c.to_numpy() * scale, color=d.color, lw=1.2, alpha=0.85,
-                       label=f"{d.name} ({d.weight / sum(x.weight for x in datasets) * 100:.0f}%)")
+                       label=f"{d.name} ({d.weight / wsum * 100:.0f}%)")
     ax_eq.plot(equity.index, equity.to_numpy(), color=WHITE if len(datasets) > 1 else datasets[0].color,
                lw=2.4, label="Blend" if len(datasets) > 1 else datasets[0].name, zorder=5)
 
+    scheme = settings.get("weighting", "manual")
+    scheme_txt = "" if scheme == "manual" else f" · {scheme}"
     ax_eq.set_title(
         f"Equity · rebased to {base:g}" if len(datasets) == 1
-        else f"Equity · blended {settings['mode']}, rebased to {base:g}"
+        else f"Equity · blended {settings['mode']}{scheme_txt}, rebased to {base:g}"
     )
     ax_eq.set_ylabel("Index")
     ax_eq.grid(True, axis="y", alpha=0.6)
-    ax_eq.legend(loc="upper left", ncol=min(len(datasets) + 1, 4), fontsize=8.5)
+    ax_eq.legend(loc="upper left", ncol=min(len(active) + 1, 4), fontsize=8.5)
     ax_eq.axhline(base, color=LINE, lw=0.8, ls=(0, (4, 4)))
     _date_axis(ax_eq, equity.index)
 
@@ -875,10 +1007,34 @@ def export_json(path, datasets, bstats, settings):
         "generated": pd.Timestamp.now(tz="UTC").isoformat(),
         "settings": {k: v for k, v in settings.items()},
         "datasets": [
-            {"name": d.name, "path": d.path, "weight": d.weight, "mapping": d.mapping, **pack(d.stats)}
+            {
+                "name": d.name,
+                "path": d.path,
+                "weight": float(d.weight),
+                "weight_pct": (
+                    float(d.weight / sum(x.weight for x in datasets) * 100.0)
+                    if sum(x.weight for x in datasets) else 0.0
+                ),
+                "mapping": d.mapping,
+                **pack(d.stats),
+            }
             for d in datasets
         ],
-        "blend": pack(bstats),
+        "blend": {
+            **pack(bstats),
+            "weighting": settings.get("weighting", "manual"),
+            "weights": [
+                {
+                    "name": d.name,
+                    "weight_pct": float(d.weight / (sum(x.weight for x in datasets if x.weight > 0) or 1.0) * 100.0),
+                    "ann_vol": float(d.stats["annVol"]) if math.isfinite(float(d.stats.get("annVol", float("nan")))) else None,
+                    "max_dd": float(d.stats["maxdd"]) if math.isfinite(float(d.stats.get("maxdd", float("nan")))) else None,
+                    "sharpe": float(d.stats["sharpe"]) if math.isfinite(float(d.stats.get("sharpe", float("nan")))) else None,
+                    "calmar": float(d.stats["calmar"]) if math.isfinite(float(d.stats.get("calmar", float("nan")))) else None,
+                }
+                for d in datasets if d.weight > 0
+            ],
+        },
     }
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=2, default=str)
@@ -897,13 +1053,21 @@ def main(argv=None):
   bt.py sample.csv
   bt.py a.csv b.csv -w 60,40
   bt.py a.csv b.csv -w a=70,b=30 --rf 2 --ppy 252
+  bt.py a.csv b.csv --weighting riskparity   # or drawdown / sharpe / calmar
   bt.py *.csv --start 2022-01-01 --end 2023-12-31 -f both -o out/report.png
 """,
     )
     p.add_argument("csv", nargs="+", help="CSV/TSV files to load (in weight order)")
     p.add_argument("-w", "--weight", action="append", default=[], metavar="SPEC",
                    help="allocations: '60,40' in file order, or 'name=60,name=40'. Repeatable. "
-                        "Default: equal weight.")
+                        "Default: equal weight. Ignored with --weighting other than manual.")
+    p.add_argument("--weighting", choices=["manual", "riskparity", "drawdown", "sharpe", "calmar", "equal"],
+                   default="manual",
+                   help="how blend weights are set: 'manual' (default, uses -w or equal), "
+                        "'riskparity' (inverse volatility, w ∝ 1/σ), 'drawdown' (inverse max "
+                        "drawdown, w ∝ 1/|maxDD|), 'sharpe' (w ∝ Sharpe), 'calmar' "
+                        "(w ∝ CAGR/|maxDD|), or 'equal' (1/N); all measured over the "
+                        "--start/--end range")
     p.add_argument("--rebalance", choices=["rebalanced", "buyhold"], default="rebalanced",
                    help="rebalanced (default) applies weights to each period's returns; "
                         "buyhold lets sleeves drift")
@@ -926,14 +1090,29 @@ def main(argv=None):
     args = p.parse_args(argv)
 
     datasets = build_datasets(args.csv)
-    apply_weights(datasets, args.weight)
+    if args.weighting == "manual":
+        apply_weights(datasets, args.weight)
+    else:
+        if args.weight:
+            print(
+                f"bt.py: warning: -w/--weight ignored with --weighting {args.weighting}",
+                file=sys.stderr,
+            )
+        for d in datasets:  # placeholder until the scheme is computed after date filtering
+            d.weight = 1.0
 
     if args.list:
         for d in datasets:
             print(f"{d.name}: {len(d.curve)} rows -> {d.describe()}")
         return 0
 
-    settings = {"mode": args.rebalance, "ppy": args.ppy, "rf": args.rf / 100.0, "roll": args.roll}
+    settings = {
+        "mode": args.rebalance,
+        "weighting": args.weighting,
+        "ppy": args.ppy,
+        "rf": args.rf / 100.0,
+        "roll": args.roll,
+    }
 
     # date filter, applied to every curve
     start = pd.Timestamp(args.start) if args.start else None
@@ -946,6 +1125,9 @@ def main(argv=None):
             if end is not None:
                 c = c[c.index < end]
             d.curve = c
+
+    # risk-parity / drawdown / ratio weights use the date-filtered sample
+    apply_weighting(datasets, args.weighting, args.ppy, settings["rf"])
 
     equity, frame, coverage = blend(datasets, args.rebalance, base=args.base, strict=args.strict)
 

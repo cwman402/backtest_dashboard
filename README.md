@@ -26,6 +26,7 @@ blends them into one portfolio and prints stats plus a chart.
 ```bash
 ./bt.py a.csv b.csv -w 60,40                 # 60/40 split of every period's returns
 ./bt.py a.csv b.csv -w a=70,b=30 --rf 2      # weights by name, 2% risk-free
+./bt.py a.csv b.csv --weighting riskparity   # inverse-volatility risk parity
 ./bt.py *.csv --ppy 12 --start 2022-01-01 -f both -o out/report.png
 ```
 
@@ -35,9 +36,31 @@ applies the weights to each period's returns and renormalises across whichever
 strategies are live, so a strategy that starts later simply joins at its first
 date (`--strict` instead trims the warmup so everything starts together).
 
+`--weighting` chooses how the sleeves are sized, always from the
+`--start`/`--end` date-filtered sample and `--ppy`:
+
+- `manual` (default) uses `-w`, or equal weights when `-w` is omitted.
+- `riskparity` allocates inversely to annualised volatility, `wᵢ ∝ 1/σᵢ`
+  (lower-vol strategies get more).
+- `drawdown` allocates inversely to max drawdown, `wᵢ ∝ 1/|maxDDᵢ|`, so the
+  strategy that lost the most gets the smallest share; a 0% drawdown is floored
+  at 0.01% to keep the weight finite.
+- `sharpe` allocates in proportion to the Sharpe ratio, `wᵢ ∝ Sharpeᵢ`
+  (risk-free and `--ppy` aware), so a higher Sharpe gets more.
+- `calmar` allocates in proportion to `CAGR / |maxDD|`, so a higher Calmar gets
+  more.
+- `equal` forces `1/N`.
+
+Every scheme normalises to 100%. Strategies with a non-positive or undefined
+volatility/ratio get a 0% share and sit out of the blend; if none has a usable
+estimate the run falls back to equal weights. `-w` is ignored outside manual
+mode, and `--json` records the scheme plus each sleeve's weight %, annualised
+volatility, max drawdown, Sharpe and Calmar — mirroring the dashboard's export.
+
 | Flag | Meaning |
 |------|---------|
-| `-w, --weight` | allocations, list or `name=pct` pairs (repeatable) |
+| `-w, --weight` | allocations, list or `name=pct` pairs (repeatable); manual mode only |
+| `--weighting` | `manual` (default), `riskparity`, `drawdown`, `sharpe`, `calmar` or `equal` |
 | `--rebalance` | `rebalanced` (default) or `buyhold` (weights drift) |
 | `--ppy` | periods per year: 252 default, use 12 for monthly, 52 weekly, 365 crypto |
 | `--rf` | risk-free rate % per year (default 0) |
@@ -108,7 +131,7 @@ Configurable inputs: **periods per year** (252 daily default, or 365/52/12/4/876
 ## Weighted blend
 
 When multiple datasets are loaded, set an allocation weight on each dataset chip
-(percentages, shown with a Σ total) and switch **Weighted blend** to **On**:
+(percentages, shown with a Σ total) and switch **Blend** to **On**:
 
 - The blend is the weighted sum of each dataset's **period returns**,
   renormalised across whichever datasets have data at that date, so a strategy
@@ -117,7 +140,33 @@ When multiple datasets are loaded, set an allocation weight on each dataset chip
   the **Dataset** dropdown to drive the metrics, drawdown, rolling Sharpe and
   trade panels from it.
 - The CLI (`bt.py --rebalance buyhold`) can also let weights drift instead of
-  rebalancing each period.
+  rebalancing each period, and offers the same schemes with
+  `--weighting manual|riskparity|drawdown|sharpe|calmar|equal`.
+
+### Weighting schemes
+
+The **Weighting** dropdown next to **Blend** chooses how the blend is sized:
+
+- **Manual weights** — use the percentage typed on each dataset chip (default).
+- **Risk parity · inverse vol** — allocate inversely to each dataset's
+  annualised volatility over the selected date range, i.e. `wᵢ ∝ 1 / σᵢ`,
+  normalised to 100%. Lower-volatility strategies get a larger share, so each
+  contributes a similar amount of risk.
+- **Inverse max drawdown** — `wᵢ ∝ 1 / |maxDDᵢ|`, so strategies with deeper
+  losses get less; a 0% drawdown is floored at 0.01% to avoid an infinite
+  weight.
+- **Sharpe weighted** — `wᵢ ∝ Sharpeᵢ` (using the risk-free rate and PPY
+  settings), so a higher Sharpe gets more. Non-positive Sharpe gets 0%.
+- **Calmar weighted** — `wᵢ ∝ CAGR / |maxDDᵢ|`, so a higher Calmar gets more.
+  Non-positive Calmar gets 0%.
+- **Equal weight** — `1/N` across all valid datasets.
+
+Computed weights appear read-only on the dataset chips (with the driving
+volatility / drawdown / ratio in the tooltip and the composition note); changing
+the date range or the risk-free/PPY settings recomputes them. Choosing a scheme
+switches the blend on automatically; turning the blend off returns to manual
+weights. The scheme and the resulting weights (with annualised volatility, max
+drawdown, Sharpe and Calmar) are included in the exported metrics JSON.
 
 ## Export
 
